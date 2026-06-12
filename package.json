@@ -1,0 +1,21 @@
+{
+  "name": "staymo-code",
+  "version": "1.0.0",
+  "main": "index.js",
+  "directories": {
+    "test": "tests"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "watch": "vitest"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "description": "",
+  "type": "module",
+  "devDependencies": {
+    "jsdom": "^27.0.1",
+    "vitest": "^4.1.8"
+  }
+}
