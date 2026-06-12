@@ -63,6 +63,34 @@ export function initEarningsChart(root, { min, max, nowMonth } = {}) {
   // "Long-term rental" baseline — proxy = min month until backend provides a real figure.
   const base = root.querySelector('[data-chart="baseline"]');
   if (base) base.style.bottom = (mn / g) * 100 + "%";
+
+  // Hover tooltip. NOTE: inner hooks are legacy class selectors
+  // (.result__chart__tooltip__*) — migrate to data-* when the result markup is
+  // rebuilt (Plan 2). Kept as-is here for a regression-safe extraction.
+  const tip = document.querySelector('[data-chart-tooltip="bar-chart"]');
+  if (tip) {
+    tip.style.position = "absolute";
+    tip.style.zIndex = "10000";
+    tip.style.pointerEvents = "none";
+    tip.style.display = "none";
+  }
+  cols.forEach((col) => {
+    col.addEventListener("mouseenter", () => {
+      if (!tip) return;
+      const v = +col.getAttribute("data-value");
+      const r = col.getAttribute("data-rate");
+      const mo = col.getAttribute("data-month");
+      const mi = tip.querySelector(".result__chart__tooltip__month-income");
+      const od = tip.querySelector(".result__chart__tooltip__occupancy-daily");
+      if (mi) mi.textContent = mo + " income £" + fmt(v);
+      if (od) od.textContent = "Occupancy " + r + "% / Daily £" + fmt(Math.floor(v / 30));
+      tip.style.display = "block";
+    });
+    col.addEventListener("mousemove", (e) => {
+      if (tip) { tip.style.left = e.pageX + 12 + "px"; tip.style.top = e.pageY - 10 + "px"; }
+    });
+    col.addEventListener("mouseleave", () => { if (tip) tip.style.display = "none"; });
+  });
   return true;
 }
 
