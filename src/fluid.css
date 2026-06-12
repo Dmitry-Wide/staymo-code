@@ -1,0 +1,22 @@
+/* Accessible fluid type/space scale — pilot-scoped to .est-fluid.
+   clamp() lower & upper bounds are rem-based so browser zoom / user font-size
+   still scale the text (WCAG 1.4.4). Upper bounds are generous enough that text
+   reaches >=200% under zoom. Apply .est-fluid on the estimator section root.
+
+   MANUAL TEST (must pass before выкат):
+   1. Browser zoom to 200% — all text scales, no clipping, no horizontal scroll.
+   2. Reflow at 320px CSS width (= 1280px @ 400% zoom) — content reflows, no 2-axis scroll.
+   3. Set browser default font-size to "Very Large" — layout adapts, text grows.
+   WCAG 2.1 AA: 1.4.4 Resize Text, 1.4.10 Reflow. */
+
+.est-fluid {
+  --fs-h1:   clamp(1.75rem, 1.2rem + 2.6vw, 3rem);
+  --fs-h2:   clamp(1.4rem, 1.05rem + 1.7vw, 2.25rem);
+  --fs-body: clamp(1rem, 0.95rem + 0.25vw, 1.125rem);
+  --fs-sm:   clamp(0.875rem, 0.85rem + 0.12vw, 0.95rem);
+  --sp-section: clamp(2.5rem, 1.5rem + 4vw, 5rem);
+}
+
+.est-fluid .est__title { font-size: var(--fs-h1); }
+.est-fluid .est__sub   { font-size: var(--fs-body); }
+.est-fluid .est__label { font-size: var(--fs-sm); }
