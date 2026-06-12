@@ -15,7 +15,7 @@
   "description": "",
   "type": "module",
   "devDependencies": {
-    "jsdom": "^27.0.1",
+    "happy-dom": "^20.10.2",
     "vitest": "^4.1.8"
   }
 }
