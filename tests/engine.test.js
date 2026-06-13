@@ -1,5 +1,10 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { isFilled, validateStartInputs, initStepper } from "../src/engine.js";
+import {
+  isFilled,
+  validateStartInputs,
+  progressWidth,
+  initStepper,
+} from "../src/engine.js";
 
 beforeEach(() => {
   document.body.innerHTML = "";
@@ -30,57 +35,72 @@ describe("validateStartInputs", () => {
   });
 });
 
-// Full funnel fixture — no gsap, so transitions are instant display swaps.
+describe("progressWidth", () => {
+  it("maps 0-based step to quarter width", () => {
+    expect(progressWidth(0)).toBe("25%");
+    expect(progressWidth(1)).toBe("50%");
+    expect(progressWidth(3)).toBe("100%");
+  });
+});
+
 function funnelFixture() {
   document.body.innerHTML = `
-    <span start-progress-step></span><span start-progress-step></span>
-    <div start-step-0>
-      <input start-start-button type="button">
-      <input data-input-id="address-search"><input data-rooms-input>
-    </div>
-    <div start-step-1><label><input type="radio" name="s1"></label><button start-step-back></button></div>
-    <div start-step-2><label><input type="radio" name="s2"></label><button start-step-back></button></div>
-    <div start-step-3>
-      <input type="text"><input type="email">
-      <button start-ready-button></button><button start-step-back></button>
+    <div start-frame>
+      <span start-photo data-step="0"></span><span start-photo data-step="1"></span>
+      <span start-photo data-step="2"></span><span start-photo data-step="3"></span>
+      <div start-step-0>
+        <input start-start-button type="button">
+        <input data-input-id="address-search"><input data-rooms-input>
+      </div>
+      <div start-step-1><label><input type="radio" name="s1"></label><button start-step-back></button></div>
+      <div start-step-2><label><input type="radio" name="s2"></label><button start-step-back></button></div>
+      <div start-step-3>
+        <input type="text"><button start-ready-button></button><button start-step-back></button>
+      </div>
+      <span start-progress-fill></span>
     </div>
     <div start-loading><span start-loading-step></span><span start-loading-step></span></div>
     <div start-result></div>
     <div start-noresults></div>`;
 }
 
-const shown = (sel) => document.querySelector(sel).style.display;
+const active = (sel) => document.querySelector(sel).classList.contains("is-active");
+const width = () => document.querySelector("[start-progress-fill]").style.width;
 
 describe("initStepper — funnel flow", () => {
   beforeEach(() => vi.useFakeTimers());
   afterEach(() => vi.useRealTimers());
 
-  it("starts with only step0 visible", () => {
+  it("starts on step0: frame + step0 + photo0 active, progress 25%", () => {
     funnelFixture();
     initStepper();
-    expect(shown("[start-step-0]")).toBe("flex");
-    expect(shown("[start-step-1]")).toBe("none");
-    expect(shown("[start-result]")).toBe("none");
+    expect(active("[start-frame]")).toBe(true);
+    expect(active("[start-step-0]")).toBe(true);
+    expect(active('[start-photo][data-step="0"]')).toBe(true);
+    expect(active("[start-step-1]")).toBe(false);
+    expect(width()).toBe("25%");
   });
 
   it("blocks step0 -> step1 when inputs empty", () => {
     funnelFixture();
     initStepper();
     document.querySelector("[start-start-button]").click();
-    expect(shown("[start-step-1]")).toBe("none");
+    expect(active("[start-step-1]")).toBe(false);
     expect(
       document.querySelector('[data-input-id="address-search"]').getAttribute("data-invalid")
     ).toBe("true");
   });
 
-  it("advances step0 -> step1 when inputs filled", () => {
+  it("advances step0 -> step1 when filled: step1 + photo1 active, progress 50%", () => {
     funnelFixture();
     document.querySelector('[data-input-id="address-search"]').value = "addr";
     document.querySelector("[data-rooms-input]").value = "2";
     initStepper();
     document.querySelector("[start-start-button]").click();
-    expect(shown("[start-step-1]")).toBe("flex");
-    expect(shown("[start-step-0]")).toBe("none");
+    expect(active("[start-step-1]")).toBe(true);
+    expect(active("[start-step-0]")).toBe(false);
+    expect(active('[start-photo][data-step="1"]')).toBe(true);
+    expect(width()).toBe("50%");
   });
 
   it("auto-advances step1 -> step2 -> step3 on radio change", () => {
@@ -93,33 +113,47 @@ describe("initStepper — funnel flow", () => {
     r1.checked = true;
     r1.dispatchEvent(new Event("change", { bubbles: true }));
     vi.advanceTimersByTime(200);
-    expect(shown("[start-step-2]")).toBe("flex");
+    expect(active("[start-step-2]")).toBe(true);
     const r2 = document.querySelector('[start-step-2] input[type="radio"]');
     r2.checked = true;
     r2.dispatchEvent(new Event("change", { bubbles: true }));
     vi.advanceTimersByTime(200);
-    expect(shown("[start-step-3]")).toBe("flex");
+    expect(active("[start-step-3]")).toBe(true);
+    expect(width()).toBe("100%");
   });
 
-  it("step3 submit shows loading (not auto-result)", () => {
+  it("step3 submit shows loading and deactivates the frame", () => {
     funnelFixture();
     initStepper();
-    window.estGoTo(3); // jump to step3
+    window.estGoTo(3);
     document.querySelector("[start-ready-button]").click();
-    expect(shown("[start-loading]")).toBe("flex");
-    expect(shown("[start-step-3]")).toBe("none");
-    expect(shown("[start-result]")).toBe("none");
+    expect(active("[start-loading]")).toBe(true);
+    expect(active("[start-frame]")).toBe(false);
+    expect(active("[start-result]")).toBe(false);
   });
 
-  it("exposes estGoTo for the valuation module to show result/noresults", () => {
+  it("estGoTo drives result / noresults for the valuation module", () => {
     funnelFixture();
     initStepper();
     expect(typeof window.estGoTo).toBe("function");
     window.estGoTo("result");
-    expect(shown("[start-result]")).toBe("flex");
+    expect(active("[start-result]")).toBe(true);
+    expect(active("[start-frame]")).toBe(false);
     window.estGoTo("noresults");
-    expect(shown("[start-result]")).toBe("none");
-    expect(shown("[start-noresults]")).toBe("flex");
+    expect(active("[start-result]")).toBe(false);
+    expect(active("[start-noresults]")).toBe(true);
+  });
+
+  it("loading checklist reveals items one by one", () => {
+    funnelFixture();
+    initStepper();
+    window.estGoTo("loading");
+    const items = document.querySelectorAll("[start-loading-step]");
+    vi.advanceTimersByTime(0);
+    expect(items[0].classList.contains("is-active")).toBe(true);
+    expect(items[1].classList.contains("is-active")).toBe(false);
+    vi.advanceTimersByTime(700);
+    expect(items[1].classList.contains("is-active")).toBe(true);
   });
 
   it("back button returns step1 -> step0", () => {
@@ -127,7 +161,7 @@ describe("initStepper — funnel flow", () => {
     initStepper();
     window.estGoTo(1);
     document.querySelector("[start-step-1] [start-step-back]").click();
-    expect(shown("[start-step-0]")).toBe("flex");
-    expect(shown("[start-step-1]")).toBe("none");
+    expect(active("[start-step-0]")).toBe(true);
+    expect(active("[start-step-1]")).toBe(false);
   });
 });

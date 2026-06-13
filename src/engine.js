@@ -1,10 +1,11 @@
-/* Stepper engine — screen transitions for the start-hosting funnel.
-   Screens (one visible at a time): start-step-0..3, start-loading, start-result,
-   start-noresults. step0 validates address + beds; step1/step2 radios auto-advance;
-   step3 is a contact form whose submit (start-ready-button) shows the loading screen
-   and lets the valuation module fetch — valuation then calls window.estGoTo('result'
-   | 'noresults'). Transitions use GSAP when present, plain show/hide otherwise.
-   JS binds to contract attributes only. */
+/* Funnel engine — state only; animation lives in funnel.css (toggled via .is-active).
+   Persistent frame (photo + card content + progress) for steps 0-3; full-screen
+   loading / result / noresults shown by deactivating the frame. Flow:
+   step0 (address+beds, validated) -> step1/step2 radios auto-advance -> step3 contact
+   form -> loading -> result|noresults (valuation calls window.estGoTo). JS binds to
+   contract attributes only; no GSAP dependency. */
+
+export const STEP_COUNT = 4;
 
 export function isFilled(el) {
   return !!el && String(el.value ?? "").trim().length > 0;
@@ -24,86 +25,54 @@ export function validateStartInputs(inpAddress, inpRooms) {
   return okA && okR;
 }
 
-// Screen key -> contract attribute. Order matters for the progress bar (0..3).
-export const SCREEN_ATTR = {
-  0: "start-step-0",
-  1: "start-step-1",
-  2: "start-step-2",
-  3: "start-step-3",
-  loading: "start-loading",
-  result: "start-result",
-  noresults: "start-noresults",
-};
+// Progress fill width for a given 0-based step.
+export function progressWidth(step) {
+  return `${((step + 1) / STEP_COUNT) * 100}%`;
+}
 
 export function initStepper(doc = document) {
   const $ = (sel, root = doc) => root.querySelector(sel);
   const $$ = (sel, root = doc) => Array.from(root.querySelectorAll(sel));
-  const hasGsap = typeof gsap !== "undefined";
+  const setActive = (el, on) => el && el.classList.toggle("is-active", on);
 
-  const screens = {};
-  Object.entries(SCREEN_ATTR).forEach(([key, attr]) => {
-    screens[key] = $(`[${attr}]`);
-  });
-  const allScreens = Object.values(screens).filter(Boolean);
+  const frame = $("[start-frame]");
+  const contents = {
+    0: $("[start-step-0]"),
+    1: $("[start-step-1]"),
+    2: $("[start-step-2]"),
+    3: $("[start-step-3]"),
+  };
+  const finals = {
+    loading: $("[start-loading]"),
+    result: $("[start-result]"),
+    noresults: $("[start-noresults]"),
+  };
+  const photos = $$("[start-photo]");
+  const progressFill = $("[start-progress-fill]");
 
-  const progressSteps = $$("[start-progress-step]");
-  const PROGRESS_INDEX = { 0: 0, 1: 1, 2: 2, 3: 3 };
-  const ACTIVE_BG = "var(--_colors---brand--500)";
-  const INACTIVE_BG = "var(--_colors---gray--100)";
-  function setProgress(activeIndex) {
-    progressSteps.forEach((el, i) => {
-      el.style.backgroundColor = i <= activeIndex ? ACTIVE_BG : INACTIVE_BG;
-    });
+  function setStep(n) {
+    setActive(frame, true);
+    Object.values(finals).forEach((el) => setActive(el, false));
+    Object.entries(contents).forEach(([k, el]) => setActive(el, Number(k) === n));
+    photos.forEach((p) => setActive(p, Number(p.getAttribute("data-step")) === n));
+    if (progressFill) progressFill.style.width = progressWidth(n);
   }
 
-  function showScreen(key) {
-    const next = screens[key];
-    if (!next) return;
-    const current = allScreens.find(
-      (el) => el !== next && getDisplay(el) !== "none"
-    );
-    if (hasGsap) {
-      const tl = gsap.timeline();
-      if (current) {
-        tl.to(current, {
-          opacity: 0,
-          duration: 0.25,
-          ease: "power2.inOut",
-          onComplete: () => {
-            current.style.display = "none";
-          },
-        });
-      }
-      tl.fromTo(
-        next,
-        { opacity: 0, display: "none" },
-        { display: "flex", opacity: 1, duration: 0.35, ease: "power2.out" },
-        "+=0.1"
-      );
-    } else {
-      if (current) current.style.display = "none";
-      next.style.display = "flex";
-      next.style.opacity = "1";
-    }
-    // Progress bar only tracks the numbered steps.
-    if (key in PROGRESS_INDEX) setProgress(PROGRESS_INDEX[key]);
+  function showFinal(key) {
+    const el = finals[key];
+    if (!el) return;
+    setActive(frame, false);
+    Object.values(finals).forEach((f) => setActive(f, f === el));
+    if (key === "loading") runChecklist(el);
   }
 
-  function getDisplay(el) {
-    if (hasGsap) return gsap.getProperty(el, "display");
-    return el.style.display || "none";
+  function estGoTo(key) {
+    if (key in finals) showFinal(key);
+    else setStep(Number(key));
   }
 
-  // Initial state: only step0 visible.
-  allScreens.forEach((el) => {
-    el.style.display = "none";
-    el.style.opacity = "0";
-  });
-  if (screens[0]) {
-    screens[0].style.display = "flex";
-    screens[0].style.opacity = "1";
-  }
-  setProgress(0);
+  // Initial state: step 0.
+  setStep(0);
 
   // step0 -> step1 (validate address + beds)
   const btnStart = $("[start-start-button]");
@@ -111,56 +80,45 @@ export function initStepper(doc = document) {
   const inpRooms = $("[data-rooms-input]");
   if (btnStart) {
     btnStart.addEventListener("click", () => {
-      if (!validateStartInputs(inpAddress, inpRooms)) return;
-      showScreen(1);
+      if (validateStartInputs(inpAddress, inpRooms)) setStep(1);
     });
   }
 
   // step1 -> step2, step2 -> step3: radio auto-advance
   [
-    [screens[1], 2],
-    [screens[2], 3],
-  ].forEach(([step, nextKey]) => {
+    [contents[1], 2],
+    [contents[2], 3],
+  ].forEach(([step, next]) => {
     if (!step) return;
     step.addEventListener("change", (e) => {
       if (e.target.matches('input[type="radio"]')) {
-        setTimeout(() => showScreen(nextKey), 200);
+        setTimeout(() => setStep(next), 200);
       }
     });
   });
 
   // step3 submit -> loading (valuation listens on the same button and fetches)
-  const submitBtn = screens[3] ? $("[start-ready-button]", screens[3]) : null;
-  if (submitBtn) {
-    submitBtn.addEventListener("click", () => {
-      showScreen("loading");
-      runLoadingChecklist(screens.loading);
-    });
-  }
+  const submit = contents[3] ? $("[start-ready-button]", contents[3]) : null;
+  if (submit) submit.addEventListener("click", () => showFinal("loading"));
 
   // back buttons
-  const back = (stepEl) => (stepEl ? $("[start-step-back]", stepEl) : null);
-  const backTargets = [
-    [back(screens[1]), 0],
-    [back(screens[2]), 1],
-    [back(screens[3]), 2],
-  ];
-  backTargets.forEach(([btn, target]) => {
-    if (btn) btn.addEventListener("click", () => showScreen(target));
+  [
+    [contents[1], 0],
+    [contents[2], 1],
+    [contents[3], 2],
+  ].forEach(([step, target]) => {
+    const b = step ? $("[start-step-back]", step) : null;
+    if (b) b.addEventListener("click", () => setStep(target));
   });
 
-  // Let the valuation module drive the final transition.
-  if (typeof window !== "undefined") {
-    window.estGoTo = showScreen;
-  }
+  // Let the valuation module drive the final transitions.
+  if (typeof window !== "undefined") window.estGoTo = estGoTo;
 }
 
-// Reveal the loading checklist items one by one (decorative).
-function runLoadingChecklist(loadingEl) {
-  if (!loadingEl) return;
-  const items = Array.from(loadingEl.querySelectorAll("[start-loading-step]"));
-  items.forEach((el, i) => {
-    setTimeout(() => el.setAttribute("data-active", "true"), i * 700);
+// Reveal loading checklist items one by one (decorative; CSS animates .is-active).
+function runChecklist(loadingEl) {
+  Array.from(loadingEl.querySelectorAll("[start-loading-step]")).forEach((el, i) => {
+    setTimeout(() => el.classList.add("is-active"), i * 700);
   });
 }
 

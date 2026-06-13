@@ -1,0 +1,88 @@
+/* Funnel transitions / animation — pilot-scoped overlay. The engine toggles
+   .is-active; this module owns only VISIBILITY + entrance animation, never layout.
+   Hidden state uses display:none !important so the active element keeps the display
+   from its own project class. Respects prefers-reduced-motion. */
+
+/* ---- Screen-level visibility (one active at a time) ---- */
+[start-frame]:not(.is-active),
+[start-loading]:not(.is-active),
+[start-result]:not(.is-active),
+[start-noresults]:not(.is-active) {
+  display: none !important;
+}
+[start-frame].is-active,
+[start-loading].is-active,
+[start-result].is-active,
+[start-noresults].is-active {
+  animation: est-screen-in 0.4s ease both;
+}
+
+/* ---- Step content swap inside the frame ---- */
+[start-step-0]:not(.is-active),
+[start-step-1]:not(.is-active),
+[start-step-2]:not(.is-active),
+[start-step-3]:not(.is-active) {
+  display: none !important;
+}
+[start-step-0].is-active,
+[start-step-1].is-active,
+[start-step-2].is-active,
+[start-step-3].is-active {
+  animation: est-step-in 0.35s ease both;
+}
+
+/* ---- Left photo layers: crossfade + subtle Ken Burns ----
+   Markup stacks the layers (absolute) inside the photo box. */
+[start-photo] {
+  opacity: 0;
+  transition: opacity 0.5s ease;
+}
+[start-photo].is-active {
+  opacity: 1;
+  animation: est-kenburns 9s ease-out both;
+}
+
+/* ---- Progress fill: engine sets width, this animates it ---- */
+[start-progress-fill] {
+  transition: width 0.4s ease;
+}
+
+/* ---- Loading checklist items reveal one by one ---- */
+[start-loading-step] {
+  opacity: 0.35;
+  transition: opacity 0.3s ease;
+}
+[start-loading-step].is-active {
+  opacity: 1;
+}
+
+@keyframes est-screen-in {
+  from { opacity: 0; transform: translateY(0.75rem); }
+  to   { opacity: 1; transform: none; }
+}
+@keyframes est-step-in {
+  from { opacity: 0; transform: translateY(0.5rem); }
+  to   { opacity: 1; transform: none; }
+}
+@keyframes est-kenburns {
+  from { transform: scale(1); }
+  to   { transform: scale(1.05); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [start-frame].is-active,
+  [start-loading].is-active,
+  [start-result].is-active,
+  [start-noresults].is-active,
+  [start-step-0].is-active,
+  [start-step-1].is-active,
+  [start-step-2].is-active,
+  [start-step-3].is-active,
+  [start-photo].is-active {
+    animation: none;
+  }
+  [start-photo],
+  [start-progress-fill] {
+    transition: none;
+  }
+}
