@@ -48,7 +48,7 @@ function fixture({ withTooltip = false } = {}) {
   root.innerHTML =
     cols +
     `<span data-chart="ytick"></span><span data-chart="ytick"></span>` +
-    `<div data-chart="baseline"></div>`;
+    `<div data-chart="baseline"></div><span data-chart="baseline-label"></span>`;
   document.body.appendChild(root);
   if (withTooltip) {
     const tip = document.createElement("div");
@@ -71,6 +71,13 @@ describe("initEarningsChart", () => {
     expect(cols[6].getAttribute("data-value")).toBe("5000");
     const bar6 = cols[6].querySelector('[data-chart="bar"]');
     expect(parseFloat(bar6.style.height)).toBeCloseTo((5000 / 6000) * 100, 1);
+  });
+  it("positions and labels the long-term baseline (proxy = min)", () => {
+    const root = fixture();
+    initEarningsChart(root, { min: 1000, max: 5000, nowMonth: 0 });
+    const label = root.querySelector('[data-chart="baseline-label"]');
+    expect(label.textContent).toBe("£ 1,000");
+    expect(parseFloat(label.style.bottom)).toBeCloseTo((1000 / 6000) * 100, 1);
   });
   it("hides and returns false when max is missing", () => {
     const root = fixture();

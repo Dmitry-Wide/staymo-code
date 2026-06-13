@@ -61,8 +61,14 @@ export function initEarningsChart(root, { min, max, nowMonth } = {}) {
     yt[j].textContent = "£ " + (val >= 1000 ? val / 1000 + "k" : val);
   }
   // "Long-term rental" baseline — proxy = min month until backend provides a real figure.
+  const baseBottom = (mn / g) * 100 + "%";
   const base = root.querySelector('[data-chart="baseline"]');
-  if (base) base.style.bottom = (mn / g) * 100 + "%";
+  if (base) base.style.bottom = baseBottom;
+  const baseLabel = root.querySelector('[data-chart="baseline-label"]');
+  if (baseLabel) {
+    baseLabel.style.bottom = baseBottom;
+    baseLabel.textContent = "£ " + fmt(mn);
+  }
 
   // Hover tooltip. NOTE: inner hooks are legacy class selectors
   // (.result__chart__tooltip__*) — migrate to data-* when the result markup is
