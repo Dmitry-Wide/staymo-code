@@ -1,8 +1,9 @@
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { isFilled, validateStartInputs, initStepper } from "../src/engine.js";
 
 beforeEach(() => {
   document.body.innerHTML = "";
+  delete window.estGoTo;
 });
 
 describe("isFilled", () => {
@@ -29,27 +30,8 @@ describe("validateStartInputs", () => {
   });
 });
 
-function gsapStub() {
-  const tl = {
-    to: (el, o) => {
-      if (o && o.onComplete) o.onComplete();
-      return tl;
-    },
-    fromTo: (el, from, to) => {
-      if (el && to && "display" in to) el.style.display = to.display;
-      return tl;
-    },
-  };
-  return {
-    timeline: () => tl,
-    set: (el, o) => {
-      if (el && o && "display" in o) el.style.display = o.display;
-    },
-    getProperty: (el) => (el ? el.style.display || "none" : "none"),
-  };
-}
-
-function stepperFixture() {
+// Full funnel fixture — no gsap, so transitions are instant display swaps.
+function funnelFixture() {
   document.body.innerHTML = `
     <span start-progress-step></span><span start-progress-step></span>
     <div start-step-0>
@@ -57,44 +39,95 @@ function stepperFixture() {
       <input data-input-id="address-search"><input data-rooms-input>
     </div>
     <div start-step-1><label><input type="radio" name="s1"></label><button start-step-back></button></div>
-    <div start-step-2></div>
-    <div start-step-3></div>
-    <div start-ready></div><div start-not-ready></div>`;
+    <div start-step-2><label><input type="radio" name="s2"></label><button start-step-back></button></div>
+    <div start-step-3>
+      <input type="text"><input type="email">
+      <button start-ready-button></button><button start-step-back></button>
+    </div>
+    <div start-loading><span start-loading-step></span><span start-loading-step></span></div>
+    <div start-result></div>
+    <div start-noresults></div>`;
 }
 
-describe("initStepper", () => {
-  it("blocks advance when start inputs empty", () => {
-    vi.stubGlobal("gsap", gsapStub());
-    stepperFixture();
+const shown = (sel) => document.querySelector(sel).style.display;
+
+describe("initStepper — funnel flow", () => {
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => vi.useRealTimers());
+
+  it("starts with only step0 visible", () => {
+    funnelFixture();
     initStepper();
-    const s1 = document.querySelector("[start-step-1]");
-    document.querySelector("[start-start-button]").click();
-    expect(s1.style.display === "none" || s1.style.display === "").toBe(true);
-    expect(document.querySelector('[data-input-id="address-search"]').getAttribute("data-invalid")).toBe("true");
+    expect(shown("[start-step-0]")).toBe("flex");
+    expect(shown("[start-step-1]")).toBe("none");
+    expect(shown("[start-result]")).toBe("none");
   });
 
-  it("advances to step1 when inputs filled", () => {
-    vi.stubGlobal("gsap", gsapStub());
-    stepperFixture();
+  it("blocks step0 -> step1 when inputs empty", () => {
+    funnelFixture();
+    initStepper();
+    document.querySelector("[start-start-button]").click();
+    expect(shown("[start-step-1]")).toBe("none");
+    expect(
+      document.querySelector('[data-input-id="address-search"]').getAttribute("data-invalid")
+    ).toBe("true");
+  });
+
+  it("advances step0 -> step1 when inputs filled", () => {
+    funnelFixture();
     document.querySelector('[data-input-id="address-search"]').value = "addr";
     document.querySelector("[data-rooms-input]").value = "2";
     initStepper();
     document.querySelector("[start-start-button]").click();
-    expect(document.querySelector("[start-step-1]").style.display).toBe("flex");
+    expect(shown("[start-step-1]")).toBe("flex");
+    expect(shown("[start-step-0]")).toBe("none");
   });
 
-  it("auto-advances step1 → step2 on radio change", async () => {
-    vi.stubGlobal("gsap", gsapStub());
-    stepperFixture();
+  it("auto-advances step1 -> step2 -> step3 on radio change", () => {
+    funnelFixture();
     document.querySelector('[data-input-id="address-search"]').value = "addr";
     document.querySelector("[data-rooms-input]").value = "2";
     initStepper();
     document.querySelector("[start-start-button]").click();
-    const radio = document.querySelector('[start-step-1] input[type="radio"]');
-    radio.checked = true;
-    radio.dispatchEvent(new Event("change", { bubbles: true }));
-    await vi.waitFor(() =>
-      expect(document.querySelector("[start-step-2]").style.display).toBe("flex")
-    );
+    const r1 = document.querySelector('[start-step-1] input[type="radio"]');
+    r1.checked = true;
+    r1.dispatchEvent(new Event("change", { bubbles: true }));
+    vi.advanceTimersByTime(200);
+    expect(shown("[start-step-2]")).toBe("flex");
+    const r2 = document.querySelector('[start-step-2] input[type="radio"]');
+    r2.checked = true;
+    r2.dispatchEvent(new Event("change", { bubbles: true }));
+    vi.advanceTimersByTime(200);
+    expect(shown("[start-step-3]")).toBe("flex");
+  });
+
+  it("step3 submit shows loading (not auto-result)", () => {
+    funnelFixture();
+    initStepper();
+    window.estGoTo(3); // jump to step3
+    document.querySelector("[start-ready-button]").click();
+    expect(shown("[start-loading]")).toBe("flex");
+    expect(shown("[start-step-3]")).toBe("none");
+    expect(shown("[start-result]")).toBe("none");
+  });
+
+  it("exposes estGoTo for the valuation module to show result/noresults", () => {
+    funnelFixture();
+    initStepper();
+    expect(typeof window.estGoTo).toBe("function");
+    window.estGoTo("result");
+    expect(shown("[start-result]")).toBe("flex");
+    window.estGoTo("noresults");
+    expect(shown("[start-result]")).toBe("none");
+    expect(shown("[start-noresults]")).toBe("flex");
+  });
+
+  it("back button returns step1 -> step0", () => {
+    funnelFixture();
+    initStepper();
+    window.estGoTo(1);
+    document.querySelector("[start-step-1] [start-step-back]").click();
+    expect(shown("[start-step-0]")).toBe("flex");
+    expect(shown("[start-step-1]")).toBe("none");
   });
 });

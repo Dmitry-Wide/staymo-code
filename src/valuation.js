@@ -82,11 +82,41 @@ export function applyOutputs(doc, { response, fullAddress, postcode, beds, leads
   setFieldValue(doc.querySelector('[form_data="estimation"]'), `£${minimum} - £${maximum}`);
 }
 
+// Drive the funnel transition. Prefers the engine's screen controller; falls back
+// to toggling the legacy data-display marker if the engine did not load.
+function goTo(doc, key) {
+  if (typeof window !== "undefined" && typeof window.estGoTo === "function") {
+    window.estGoTo(key);
+    return;
+  }
+  const el = doc.querySelector(`[data-display="${key}"]`);
+  if (el) el.style.display = key === "result" ? "flex" : "block";
+}
+
 function showNoResultsState(doc) {
-  const mainForm = doc.querySelector('[data_section="main_form"]');
-  const noResults = doc.querySelector('[data-display="noresults"]');
-  if (mainForm) mainForm.style.display = "none";
-  if (noResults) noResults.style.display = "block";
+  goTo(doc, "noresults");
+}
+
+// Draw the chart once the result screen is actually visible (GSAP fades it in).
+function drawChartWhenVisible(doc, min, max) {
+  if (!window.initChart) return;
+  const screen =
+    doc.querySelector("[start-result]") || doc.querySelector('[data-display="result"]');
+  if (!screen) {
+    window.initChart(min, max);
+    return;
+  }
+  if (getComputedStyle(screen).display !== "none") {
+    window.initChart(min, max);
+    return;
+  }
+  const obs = new MutationObserver(() => {
+    if (getComputedStyle(screen).display !== "none") {
+      obs.disconnect();
+      window.initChart(min, max);
+    }
+  });
+  obs.observe(screen, { attributes: true, attributeFilter: ["style", "class"] });
 }
 
 export function initValuation(doc = document) {
@@ -123,21 +153,11 @@ export function initValuation(doc = document) {
             return;
           }
           applyOutputs(doc, { response, fullAddress, postcode, beds, leadstart });
-          const resultEl = doc.querySelector('[data-display="result"]');
-          if (resultEl && window.initChart) {
-            const obs = new MutationObserver(() => {
-              if (getComputedStyle(resultEl).display !== "none") {
-                obs.disconnect();
-                window.initChart(response.minimum, response.maximum);
-              }
-            });
-            obs.observe(resultEl, { attributes: true, attributeFilter: ["style", "class"] });
-          }
+          goTo(doc, "result");
+          drawChartWhenVisible(doc, response.minimum, response.maximum);
         })
         .catch(() => {
           showNoResultsState(doc);
-          const fail = doc.querySelector(".w-form-fail");
-          if (fail) fail.style.display = "block";
         });
     }, 0);
   });

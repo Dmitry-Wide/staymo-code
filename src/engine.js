@@ -1,6 +1,10 @@
-/* Stepper engine — GSAP fade transitions, radio auto-advance, ready/not-ready branch.
-   JS binds to contract attributes only; behaviour ported 1:1 from the inline embed.
-   Depends on the global `gsap` (loaded by a non-defer script before this module). */
+/* Stepper engine — screen transitions for the start-hosting funnel.
+   Screens (one visible at a time): start-step-0..3, start-loading, start-result,
+   start-noresults. step0 validates address + beds; step1/step2 radios auto-advance;
+   step3 is a contact form whose submit (start-ready-button) shows the loading screen
+   and lets the valuation module fetch — valuation then calls window.estGoTo('result'
+   | 'noresults'). Transitions use GSAP when present, plain show/hide otherwise.
+   JS binds to contract attributes only. */
 
 export function isFilled(el) {
   return !!el && String(el.value ?? "").trim().length > 0;
@@ -20,12 +24,30 @@ export function validateStartInputs(inpAddress, inpRooms) {
   return okA && okR;
 }
 
+// Screen key -> contract attribute. Order matters for the progress bar (0..3).
+export const SCREEN_ATTR = {
+  0: "start-step-0",
+  1: "start-step-1",
+  2: "start-step-2",
+  3: "start-step-3",
+  loading: "start-loading",
+  result: "start-result",
+  noresults: "start-noresults",
+};
+
 export function initStepper(doc = document) {
-  if (typeof gsap === "undefined") return;
   const $ = (sel, root = doc) => root.querySelector(sel);
   const $$ = (sel, root = doc) => Array.from(root.querySelectorAll(sel));
+  const hasGsap = typeof gsap !== "undefined";
+
+  const screens = {};
+  Object.entries(SCREEN_ATTR).forEach(([key, attr]) => {
+    screens[key] = $(`[${attr}]`);
+  });
+  const allScreens = Object.values(screens).filter(Boolean);
 
   const progressSteps = $$("[start-progress-step]");
+  const PROGRESS_INDEX = { 0: 0, 1: 1, 2: 2, 3: 3 };
   const ACTIVE_BG = "var(--_colors---brand--500)";
   const INACTIVE_BG = "var(--_colors---gray--100)";
   function setProgress(activeIndex) {
@@ -34,92 +56,112 @@ export function initStepper(doc = document) {
     });
   }
 
-  const stepStart = $("[start-step-0]");
-  const step1 = $("[start-step-1]");
-  const step2 = $("[start-step-2]");
-  const step3 = $("[start-step-3]");
-  const ready = $("[start-ready]");
-  const notReady = $("[start-not-ready]");
-  const allSteps = [stepStart, step1, step2, step3, ready, notReady];
+  function showScreen(key) {
+    const next = screens[key];
+    if (!next) return;
+    const current = allScreens.find(
+      (el) => el !== next && getDisplay(el) !== "none"
+    );
+    if (hasGsap) {
+      const tl = gsap.timeline();
+      if (current) {
+        tl.to(current, {
+          opacity: 0,
+          duration: 0.25,
+          ease: "power2.inOut",
+          onComplete: () => {
+            current.style.display = "none";
+          },
+        });
+      }
+      tl.fromTo(
+        next,
+        { opacity: 0, display: "none" },
+        { display: "flex", opacity: 1, duration: 0.35, ease: "power2.out" },
+        "+=0.1"
+      );
+    } else {
+      if (current) current.style.display = "none";
+      next.style.display = "flex";
+      next.style.opacity = "1";
+    }
+    // Progress bar only tracks the numbered steps.
+    if (key in PROGRESS_INDEX) setProgress(PROGRESS_INDEX[key]);
+  }
 
+  function getDisplay(el) {
+    if (hasGsap) return gsap.getProperty(el, "display");
+    return el.style.display || "none";
+  }
+
+  // Initial state: only step0 visible.
+  allScreens.forEach((el) => {
+    el.style.display = "none";
+    el.style.opacity = "0";
+  });
+  if (screens[0]) {
+    screens[0].style.display = "flex";
+    screens[0].style.opacity = "1";
+  }
+  setProgress(0);
+
+  // step0 -> step1 (validate address + beds)
   const btnStart = $("[start-start-button]");
   const inpAddress = $('[data-input-id="address-search"]');
   const inpRooms = $("[data-rooms-input]");
-  const back1 = step1 ? $("[start-step-back]", step1) : null;
-  const back2 = step2 ? $("[start-step-back]", step2) : null;
-  const back3 = step3 ? $("[start-step-back]", step3) : null;
-
-  function fadeToStep(nextStepEl) {
-    if (!nextStepEl) return;
-    const currentStep = allSteps.find((el) => el && gsap.getProperty(el, "display") !== "none");
-    const tl = gsap.timeline();
-    if (currentStep && currentStep !== nextStepEl) {
-      tl.to(currentStep, {
-        opacity: 0,
-        duration: 0.25,
-        ease: "power2.inOut",
-        onComplete: () => {
-          currentStep.style.display = "none";
-        },
-      });
-    }
-    tl.fromTo(
-      nextStepEl,
-      { opacity: 0, display: "none" },
-      { display: "flex", opacity: 1, duration: 0.35, ease: "power2.out" },
-      "+=0.1"
-    );
-  }
-
-  function goTo(key) {
-    if (key === "start") { fadeToStep(stepStart); setProgress(0); }
-    if (key === "s1") { fadeToStep(step1); setProgress(1); }
-    if (key === "s2") { fadeToStep(step2); setProgress(2); }
-    if (key === "s3") { fadeToStep(step3); setProgress(3); }
-  }
-  function goToFinal(which) {
-    setProgress(4);
-    if (which === "ready") {
-      if (notReady) notReady.remove();
-      fadeToStep(ready);
-    } else {
-      if (ready) ready.remove();
-      fadeToStep(notReady);
-    }
-  }
-
-  allSteps.forEach((el) => {
-    if (el) gsap.set(el, { display: "none", opacity: 0 });
-  });
-  if (stepStart) gsap.set(stepStart, { display: "flex", opacity: 1 });
-  setProgress(0);
-
   if (btnStart) {
     btnStart.addEventListener("click", () => {
       if (!validateStartInputs(inpAddress, inpRooms)) return;
-      goTo("s1");
+      showScreen(1);
     });
   }
-  [step1, step2].forEach((step, idx) => {
-    if (step) {
-      step.addEventListener("change", (e) => {
-        if (e.target.matches('input[type="radio"]')) {
-          setTimeout(() => goTo(`s${idx + 2}`), 200);
-        }
-      });
-    }
+
+  // step1 -> step2, step2 -> step3: radio auto-advance
+  [
+    [screens[1], 2],
+    [screens[2], 3],
+  ].forEach(([step, nextKey]) => {
+    if (!step) return;
+    step.addEventListener("change", (e) => {
+      if (e.target.matches('input[type="radio"]')) {
+        setTimeout(() => showScreen(nextKey), 200);
+      }
+    });
   });
-  if (step3) {
-    step3.addEventListener("change", (e) => {
-      const t = e.target;
-      if (!t || !t.matches('input[type="radio"][start-step-radio]')) return;
-      const val = t.getAttribute("start-step-radio");
-      setTimeout(() => goToFinal(val === "ready" ? "ready" : "not-ready"), 200);
+
+  // step3 submit -> loading (valuation listens on the same button and fetches)
+  const submitBtn = screens[3] ? $("[start-ready-button]", screens[3]) : null;
+  if (submitBtn) {
+    submitBtn.addEventListener("click", () => {
+      showScreen("loading");
+      runLoadingChecklist(screens.loading);
     });
   }
-  if (back1) back1.addEventListener("click", () => goTo("start"));
-  if (back2) back2.addEventListener("click", () => goTo("s1"));
-  if (back3) back3.addEventListener("click", () => goTo("s2"));
+
+  // back buttons
+  const back = (stepEl) => (stepEl ? $("[start-step-back]", stepEl) : null);
+  const backTargets = [
+    [back(screens[1]), 0],
+    [back(screens[2]), 1],
+    [back(screens[3]), 2],
+  ];
+  backTargets.forEach(([btn, target]) => {
+    if (btn) btn.addEventListener("click", () => showScreen(target));
+  });
+
+  // Let the valuation module drive the final transition.
+  if (typeof window !== "undefined") {
+    window.estGoTo = showScreen;
+  }
+}
+
+// Reveal the loading checklist items one by one (decorative).
+function runLoadingChecklist(loadingEl) {
+  if (!loadingEl) return;
+  const items = Array.from(loadingEl.querySelectorAll("[start-loading-step]"));
+  items.forEach((el, i) => {
+    setTimeout(() => el.setAttribute("data-active", "true"), i * 700);
+  });
 }
 
 if (typeof window !== "undefined") {
