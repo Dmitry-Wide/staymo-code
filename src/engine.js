@@ -99,6 +99,16 @@ export function initStepper(doc = document) {
     });
   });
 
+  // explicit Next buttons (complement radio auto-advance; needed after Back,
+  // when the already-checked radio fires no change event)
+  [
+    [contents[1], 2],
+    [contents[2], 3],
+  ].forEach(([step, next]) => {
+    const nb = step ? $("[start-next]", step) : null;
+    if (nb) nb.addEventListener("click", () => setStep(next));
+  });
+
   // step3 submit -> loading (valuation listens on the same button and fetches)
   const submit = contents[3] ? $("[start-ready-button]", contents[3]) : null;
   if (submit) submit.addEventListener("click", () => showFinal("loading"));

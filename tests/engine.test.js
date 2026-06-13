@@ -52,8 +52,8 @@ function funnelFixture() {
         <input start-start-button type="button">
         <input data-input-id="address-search"><input data-rooms-input>
       </div>
-      <div start-step-1><label><input type="radio" name="s1"></label><button start-step-back></button></div>
-      <div start-step-2><label><input type="radio" name="s2"></label><button start-step-back></button></div>
+      <div start-step-1><label><input type="radio" name="s1"></label><button start-next></button><button start-step-back></button></div>
+      <div start-step-2><label><input type="radio" name="s2"></label><button start-next></button><button start-step-back></button></div>
       <div start-step-3>
         <input type="text"><button start-ready-button></button><button start-step-back></button>
       </div>
@@ -155,6 +155,21 @@ describe("initStepper — funnel flow", () => {
     expect(items[1].classList.contains("is-active")).toBe(false);
     vi.advanceTimersByTime(700);
     expect(items[1].classList.contains("is-active")).toBe(true);
+  });
+
+  it("Next button advances even when the radio is already checked (post-Back)", () => {
+    funnelFixture();
+    initStepper();
+    window.estGoTo(1);
+    const r1 = document.querySelector('[start-step-1] input[type="radio"]');
+    r1.checked = true;
+    r1.dispatchEvent(new Event("change", { bubbles: true }));
+    vi.advanceTimersByTime(200); // auto-advanced to step2
+    document.querySelector("[start-step-2] [start-step-back]").click(); // back to step1
+    expect(active("[start-step-1]")).toBe(true);
+    // radio still checked -> re-click fires no change; Next must still advance
+    document.querySelector("[start-step-1] [start-next]").click();
+    expect(active("[start-step-2]")).toBe(true);
   });
 
   it("back button returns step1 -> step0", () => {
