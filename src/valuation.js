@@ -74,10 +74,20 @@ export function applyOutputs(doc, { response, fullAddress, postcode, beds, leads
     const el = doc.querySelector(sel);
     if (el) el.textContent = val;
   };
-  set('[data-output="minimum-value"]', minimum);
-  set('[data-output="maximum-value"]', maximum);
+  const num = (v) => Number(String(v ?? "").replace(/[^0-9.]/g, "")) || 0;
+  const money = (v) => `£${num(v).toLocaleString("en-GB")}`;
+  set('[data-output="minimum-value"]', money(minimum));
+  set('[data-output="maximum-value"]', money(maximum));
   set('[data-output="occupancy-value"]', `${occupancy}%`);
-  if (annual) set('[data-output="annual-revenue"]', `${annual}`);
+  if (annual) set('[data-output="annual-revenue"]', money(annual));
+  // Derived stats (avg per month / avg nightly) — API gives annual + occupancy only.
+  const annualN = num(annual),
+    occN = num(occupancy);
+  if (annualN) {
+    const monthly = Math.round(annualN / 12);
+    set('[data-output="monthly-value"]', money(monthly));
+    if (occN) set('[data-output="nightly-value"]', money(Math.round(monthly / (30 * (occN / 100)))));
+  }
   set('[data-output="address"]', showAddress || fullAddress || postcode);
   setFieldValue(doc.querySelector('[form_data="estimation"]'), `£${minimum} - £${maximum}`);
 }

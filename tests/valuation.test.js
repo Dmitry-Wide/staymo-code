@@ -64,6 +64,8 @@ function outputsFixture() {
     <span data-output="maximum-value"></span>
     <span data-output="occupancy-value"></span>
     <span data-output="annual-revenue"></span>
+    <span data-output="monthly-value"></span>
+    <span data-output="nightly-value"></span>
     <span data-output="address"></span>
     <input form_data="estimation">
     <input data-process="postcode"><input data-process="property_bedrooms">
@@ -88,9 +90,11 @@ describe("applyOutputs", () => {
       beds: "2",
       leadstart: "ppc",
     });
-    expect(document.querySelector('[data-output="minimum-value"]').textContent).toBe("1000");
+    expect(document.querySelector('[data-output="minimum-value"]').textContent).toBe("£1,000");
     expect(document.querySelector('[data-output="occupancy-value"]').textContent).toBe("88%");
-    expect(document.querySelector('[data-output="annual-revenue"]').textContent).toBe("36000");
+    expect(document.querySelector('[data-output="annual-revenue"]').textContent).toBe("£36,000");
+    expect(document.querySelector('[data-output="monthly-value"]').textContent).toBe("£3,000");
+    expect(document.querySelector('[data-output="nightly-value"]').textContent).toBe("£114");
     expect(document.querySelector('[form_data="estimation"]').value).toBe("£1000 - £5000");
     expect(document.querySelector('[data-process="property_bedrooms"]').value).toBe("2");
   });
@@ -116,7 +120,7 @@ describe("initValuation", () => {
     document.querySelector('[aria-label="Start Estimate"]').dispatchEvent(new Event("click", { bubbles: true }));
     await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledOnce());
     await vi.waitFor(() =>
-      expect(document.querySelector('[data-output="minimum-value"]').textContent).toBe("1000")
+      expect(document.querySelector('[data-output="minimum-value"]').textContent).toBe("£1,000")
     );
   });
 
