@@ -60,7 +60,7 @@ function funnelFixture() {
       <span start-progress-fill></span><span start-step-counter></span>
     </div>
     <div start-loading><span start-loading-step></span><span start-loading-step></span></div>
-    <div start-result></div>
+    <div start-result><button start-restart></button></div>
     <div start-noresults></div>`;
 }
 
@@ -170,6 +170,16 @@ describe("initStepper — funnel flow", () => {
     // radio still checked -> re-click fires no change; Next must still advance
     document.querySelector("[start-step-1] [start-next]").click();
     expect(active("[start-step-2]")).toBe(true);
+  });
+
+  it("Start again from result returns to step0", () => {
+    funnelFixture();
+    initStepper();
+    window.estGoTo("result");
+    document.querySelector("[start-restart]").click();
+    expect(active("[start-step-0]")).toBe(true);
+    expect(active("[start-frame]")).toBe(true);
+    expect(active("[start-result]")).toBe(false);
   });
 
   it("back button returns step1 -> step0", () => {

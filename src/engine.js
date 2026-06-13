@@ -123,6 +123,10 @@ export function initStepper(doc = document) {
     if (b) b.addEventListener("click", () => setStep(target));
   });
 
+  // "Start again" from the result/noresults screen -> back to step 0
+  const restart = $("[start-restart]");
+  if (restart) restart.addEventListener("click", () => setStep(0));
+
   // Let the valuation module drive the final transitions.
   if (typeof window !== "undefined") window.estGoTo = estGoTo;
 }
