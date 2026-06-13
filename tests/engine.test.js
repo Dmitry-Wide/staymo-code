@@ -57,7 +57,7 @@ function funnelFixture() {
       <div start-step-3>
         <input type="text"><button start-ready-button></button><button start-step-back></button>
       </div>
-      <span start-progress-fill></span>
+      <span start-progress-fill></span><span start-step-counter></span>
     </div>
     <div start-loading><span start-loading-step></span><span start-loading-step></span></div>
     <div start-result></div>
@@ -101,6 +101,7 @@ describe("initStepper — funnel flow", () => {
     expect(active("[start-step-0]")).toBe(false);
     expect(active('[start-photo][data-step="1"]')).toBe(true);
     expect(width()).toBe("50%");
+    expect(document.querySelector("[start-step-counter]").textContent).toBe("2 of 4 steps");
   });
 
   it("auto-advances step1 -> step2 -> step3 on radio change", () => {

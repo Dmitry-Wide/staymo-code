@@ -49,6 +49,7 @@ export function initStepper(doc = document) {
   };
   const photos = $$("[start-photo]");
   const progressFill = $("[start-progress-fill]");
+  const counter = $("[start-step-counter]");
 
   function setStep(n) {
     setActive(frame, true);
@@ -56,6 +57,7 @@ export function initStepper(doc = document) {
     Object.entries(contents).forEach(([k, el]) => setActive(el, Number(k) === n));
     photos.forEach((p) => setActive(p, Number(p.getAttribute("data-step")) === n));
     if (progressFill) progressFill.style.width = progressWidth(n);
+    if (counter) counter.textContent = `${n + 1} of ${STEP_COUNT} steps`;
   }
 
   function showFinal(key) {
