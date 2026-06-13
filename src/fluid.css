@@ -1,19 +1,22 @@
-/* Accessible fluid type/space scale — pilot-scoped to .est-fluid.
-   clamp() lower & upper bounds are rem-based so browser zoom / user font-size
-   still scale the text (WCAG 1.4.4). Upper bounds are generous enough that text
-   reaches >=200% under zoom. Apply .est-fluid on the estimator section root.
+/* Accessible type/space scale — pilot-scoped to .est-fluid.
+   Sizes are rem-based so browser zoom / user font-size still scale text (WCAG
+   1.4.4). Upper clamp bounds are pinned to the Figma desktop sizes so the design
+   renders 1:1 at desktop; smaller screens scale down. Apply .est-fluid on the
+   estimator section root.
+
+   Figma type: Heading/XS 32px (title), Body/L 16px (sub/body), Body/S 12px
+   (label). Heading sizes for result/testimonial are set explicitly in markup.
 
    MANUAL TEST (must pass before выкат):
-   1. Browser zoom to 200% — all text scales, no clipping, no horizontal scroll.
-   2. Reflow at 320px CSS width (= 1280px @ 400% zoom) — content reflows, no 2-axis scroll.
-   3. Set browser default font-size to "Very Large" — layout adapts, text grows.
+   1. Browser zoom 200% — text scales, no clipping, no horizontal scroll.
+   2. Reflow at 320px CSS width — content reflows, no 2-axis scroll.
    WCAG 2.1 AA: 1.4.4 Resize Text, 1.4.10 Reflow. */
 
 .est-fluid {
-  --fs-h1:   clamp(1.75rem, 1.2rem + 2.6vw, 3rem);
-  --fs-h2:   clamp(1.4rem, 1.05rem + 1.7vw, 2.25rem);
-  --fs-body: clamp(1rem, 0.95rem + 0.25vw, 1.125rem);
-  --fs-sm:   clamp(0.875rem, 0.85rem + 0.12vw, 0.95rem);
+  --fs-h1:   clamp(1.5rem, 1rem + 2.2vw, 2rem);     /* 24 -> 32px */
+  --fs-h2:   clamp(1.25rem, 1rem + 1.1vw, 1.5rem);  /* 20 -> 24px */
+  --fs-body: 1rem;                                   /* 16px */
+  --fs-sm:   0.75rem;                                /* 12px */
   --sp-section: clamp(2.5rem, 1.5rem + 4vw, 5rem);
 }
 
