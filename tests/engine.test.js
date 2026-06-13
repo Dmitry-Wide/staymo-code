@@ -2,9 +2,35 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import {
   isFilled,
   validateStartInputs,
+  isValidEmail,
+  validateStep3,
   progressWidth,
   initStepper,
 } from "../src/engine.js";
+
+describe("isValidEmail", () => {
+  it("accepts well-formed, rejects malformed", () => {
+    expect(isValidEmail("a@b.io")).toBe(true);
+    expect(isValidEmail("nope")).toBe(false);
+    expect(isValidEmail("a@b")).toBe(false);
+    expect(isValidEmail("")).toBe(false);
+  });
+});
+
+describe("validateStep3", () => {
+  it("false until name+email+phone+consent valid", () => {
+    document.body.innerHTML = `<div id="s">
+      <input data-input="full-name"><input data-input="email">
+      <input data-input="phone"><input type="checkbox" data-input="consent"></div>`;
+    const s = document.getElementById("s");
+    expect(validateStep3(s)).toBe(false);
+    s.querySelector('[data-input="full-name"]').value = "Jane";
+    s.querySelector('[data-input="email"]').value = "jane@x.io";
+    s.querySelector('[data-input="phone"]').value = "07700900123";
+    s.querySelector('[data-input="consent"]').checked = true;
+    expect(validateStep3(s)).toBe(true);
+  });
+});
 
 beforeEach(() => {
   document.body.innerHTML = "";
@@ -52,10 +78,12 @@ function funnelFixture() {
         <input start-start-button type="button">
         <input data-input-id="address-search"><input data-rooms-input>
       </div>
-      <div start-step-1><label><input type="radio" name="s1"></label><button start-next></button><button start-step-back></button></div>
-      <div start-step-2><label><input type="radio" name="s2"></label><button start-next></button><button start-step-back></button></div>
+      <div start-step-1><label><input type="radio" name="s1"></label><button start-next></button><button start-step-back></button><div start-step-error></div></div>
+      <div start-step-2><label><input type="radio" name="s2"></label><button start-next></button><button start-step-back></button><div start-step-error></div></div>
       <div start-step-3>
-        <input type="text"><button start-ready-button></button><button start-step-back></button>
+        <input data-input="full-name"><input data-input="email"><input data-input="phone">
+        <input type="checkbox" data-input="consent">
+        <button start-ready-button></button><button start-step-back></button><div start-step-error></div>
       </div>
       <span start-progress-fill></span><span start-step-counter></span>
     </div>
@@ -123,14 +151,41 @@ describe("initStepper — funnel flow", () => {
     expect(width()).toBe("100%");
   });
 
-  it("step3 submit shows loading and deactivates the frame", () => {
+  function fillStep3() {
+    document.querySelector('[data-input="full-name"]').value = "Jane Doe";
+    document.querySelector('[data-input="email"]').value = "jane@x.io";
+    document.querySelector('[data-input="phone"]').value = "07700900123";
+    document.querySelector('[data-input="consent"]').checked = true;
+  }
+
+  it("step3 submit (valid) shows loading and deactivates the frame", () => {
+    funnelFixture();
+    initStepper();
+    window.estGoTo(3);
+    fillStep3();
+    document.querySelector("[start-ready-button]").click();
+    expect(active("[start-loading]")).toBe(true);
+    expect(active("[start-frame]")).toBe(false);
+  });
+
+  it("Next without a selection shows error and does not advance", () => {
+    funnelFixture();
+    initStepper();
+    window.estGoTo(1);
+    document.querySelector("[start-step-1] [start-next]").click();
+    expect(active("[start-step-2]")).toBe(false);
+    expect(document.querySelector("[start-step-1] [start-step-error]").classList.contains("is-active")).toBe(true);
+  });
+
+  it("step3 submit (invalid) blocks loading and marks fields", () => {
     funnelFixture();
     initStepper();
     window.estGoTo(3);
     document.querySelector("[start-ready-button]").click();
-    expect(active("[start-loading]")).toBe(true);
-    expect(active("[start-frame]")).toBe(false);
-    expect(active("[start-result]")).toBe(false);
+    expect(active("[start-loading]")).toBe(false);
+    expect(active("[start-step-3]")).toBe(true);
+    expect(document.querySelector('[data-input="email"]').getAttribute("data-invalid")).toBe("true");
+    expect(document.querySelector('[data-input="consent"]').getAttribute("data-invalid")).toBe("true");
   });
 
   it("estGoTo drives result / noresults for the valuation module", () => {

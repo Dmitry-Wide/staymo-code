@@ -25,6 +25,40 @@ export function validateStartInputs(inpAddress, inpRooms) {
   return okA && okR;
 }
 
+export function isValidEmail(v) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(v || "").trim());
+}
+
+function setStepError(step, on) {
+  const err = step && step.querySelector("[start-step-error]");
+  if (err) err.classList.toggle("is-active", on);
+}
+
+// step3 contact form: name + valid email + phone + consent. Marks invalid fields.
+export function validateStep3(step) {
+  if (!step) return true;
+  let ok = true;
+  const name = step.querySelector('[data-input="full-name"]');
+  const email = step.querySelector('[data-input="email"]');
+  const phone = step.querySelector('[data-input="phone"]');
+  const consent = step.querySelector('[data-input="consent"]');
+  const req = (el) => {
+    const bad = !el || !String(el.value || "").trim();
+    markInvalid(el, bad);
+    if (bad) ok = false;
+  };
+  req(name);
+  req(phone);
+  const emailBad = !email || !isValidEmail(email.value);
+  markInvalid(email, emailBad);
+  if (emailBad) ok = false;
+  const consentBad = !consent || !consent.checked;
+  markInvalid(consent, consentBad);
+  if (consentBad) ok = false;
+  setStepError(step, !ok);
+  return ok;
+}
+
 // Progress fill width for a given 0-based step.
 export function progressWidth(step) {
   return `${((step + 1) / STEP_COUNT) * 100}%`;
@@ -94,6 +128,7 @@ export function initStepper(doc = document) {
     if (!step) return;
     step.addEventListener("change", (e) => {
       if (e.target.matches('input[type="radio"]')) {
+        setStepError(step, false);
         setTimeout(() => setStep(next), 200);
       }
     });
@@ -106,12 +141,30 @@ export function initStepper(doc = document) {
     [contents[2], 3],
   ].forEach(([step, next]) => {
     const nb = step ? $("[start-next]", step) : null;
-    if (nb) nb.addEventListener("click", () => setStep(next));
+    if (!nb) return;
+    nb.addEventListener("click", () => {
+      if (!step.querySelector('input[type="radio"]:checked')) {
+        setStepError(step, true);
+        return;
+      }
+      setStepError(step, false);
+      setStep(next);
+    });
   });
 
-  // step3 submit -> loading (valuation listens on the same button and fetches)
+  // step3 submit -> loading. Engine runs before valuation (its tag is earlier), so
+  // an invalid form stops here (stopImmediatePropagation) and valuation never fires.
   const submit = contents[3] ? $("[start-ready-button]", contents[3]) : null;
-  if (submit) submit.addEventListener("click", () => showFinal("loading"));
+  if (submit) {
+    submit.addEventListener("click", (e) => {
+      if (!validateStep3(contents[3])) {
+        e.stopImmediatePropagation();
+        e.preventDefault();
+        return;
+      }
+      showFinal("loading");
+    });
+  }
 
   // back buttons
   [
