@@ -64,6 +64,7 @@ function outputsFixture() {
     <span data-output="maximum-value"></span>
     <span data-output="occupancy-value"></span>
     <span data-output="annual-revenue"></span>
+    <span data-output="delta-annual"></span>
     <span data-output="monthly-value"></span>
     <span data-output="nightly-value"></span>
     <span data-output="address"></span>
@@ -84,7 +85,7 @@ describe("applyOutputs", () => {
   it("writes outputs + estimation + lead fields for a valid response", () => {
     outputsFixture();
     applyOutputs(document, {
-      response: { minimum: "1000", maximum: "5000", annual: "36000", occupancy: "88", show_address: "E14" },
+      response: { minimum: "1000", maximum: "5000", annual: "36000", occupancy: "88", show_address: "E14", ll_annual: "14600" },
       fullAddress: "75 Marsh Wall",
       postcode: "E14",
       beds: "2",
@@ -93,6 +94,7 @@ describe("applyOutputs", () => {
     expect(document.querySelector('[data-output="minimum-value"]').textContent).toBe("£1,000");
     expect(document.querySelector('[data-output="occupancy-value"]').textContent).toBe("88%");
     expect(document.querySelector('[data-output="annual-revenue"]').textContent).toBe("£36,000");
+    expect(document.querySelector('[data-output="delta-annual"]').textContent).toBe("+£21,400");
     expect(document.querySelector('[data-output="monthly-value"]').textContent).toBe("£3,000");
     expect(document.querySelector('[data-output="nightly-value"]').textContent).toBe("£114");
     expect(document.querySelector('[form_data="estimation"]').value).toBe("£1000 - £5000");

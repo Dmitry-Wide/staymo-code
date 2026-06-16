@@ -65,7 +65,7 @@ function setFieldValue(el, value) {
 
 export function applyOutputs(doc, { response, fullAddress, postcode, beds, leadstart }) {
   const occupancy = response?.occupancy || "84";
-  const { minimum, maximum, annual, show_address: showAddress } = response || {};
+  const { minimum, maximum, annual, show_address: showAddress, ll_annual: llAnnual } = response || {};
   setFieldValue(doc.querySelector('[data-process="postcode"]'), postcode);
   setFieldValue(doc.querySelector('[data-process="property_bedrooms"]'), beds);
   setFieldValue(doc.querySelector('[data-process="property_address"]'), fullAddress || showAddress || postcode);
@@ -80,9 +80,12 @@ export function applyOutputs(doc, { response, fullAddress, postcode, beds, leads
   set('[data-output="maximum-value"]', money(maximum));
   set('[data-output="occupancy-value"]', `${occupancy}%`);
   if (annual) set('[data-output="annual-revenue"]', money(annual));
-  // Derived stats (avg per month / avg nightly) — API gives annual + occupancy only.
+  // Uplift vs a standard long-term let = short-term annual − long-term annual (ll_annual).
   const annualN = num(annual),
-    occN = num(occupancy);
+    occN = num(occupancy),
+    llAnnualN = num(llAnnual);
+  if (annualN && llAnnualN) set('[data-output="delta-annual"]', `+${money(annualN - llAnnualN)}`);
+  // Derived stats (avg per month / avg nightly) — API gives annual + occupancy only.
   if (annualN) {
     const monthly = Math.round(annualN / 12);
     set('[data-output="monthly-value"]', money(monthly));
@@ -108,22 +111,23 @@ function showNoResultsState(doc) {
 }
 
 // Draw the chart once the result screen is actually visible (GSAP fades it in).
-function drawChartWhenVisible(doc, min, max) {
+// longTerm = ll_estimate (monthly long-term rent) → drives the chart baseline.
+function drawChartWhenVisible(doc, min, max, longTerm) {
   if (!window.initChart) return;
   const screen =
     doc.querySelector("[start-result]") || doc.querySelector('[data-display="result"]');
   if (!screen) {
-    window.initChart(min, max);
+    window.initChart(min, max, longTerm);
     return;
   }
   if (getComputedStyle(screen).display !== "none") {
-    window.initChart(min, max);
+    window.initChart(min, max, longTerm);
     return;
   }
   const obs = new MutationObserver(() => {
     if (getComputedStyle(screen).display !== "none") {
       obs.disconnect();
-      window.initChart(min, max);
+      window.initChart(min, max, longTerm);
     }
   });
   obs.observe(screen, { attributes: true, attributeFilter: ["style", "class"] });
@@ -164,7 +168,7 @@ export function initValuation(doc = document) {
           }
           applyOutputs(doc, { response, fullAddress, postcode, beds, leadstart });
           goTo(doc, "result");
-          drawChartWhenVisible(doc, response.minimum, response.maximum);
+          drawChartWhenVisible(doc, response.minimum, response.maximum, response.ll_estimate);
         })
         .catch(() => {
           showNoResultsState(doc);

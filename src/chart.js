@@ -31,7 +31,7 @@ export function generateMonths(min, max, nowMonth = new Date().getMonth()) {
   return out;
 }
 
-export function initEarningsChart(root, { min, max, nowMonth } = {}) {
+export function initEarningsChart(root, { min, max, longTerm, nowMonth } = {}) {
   if (!root) return false;
   const mn = clean(min), mx = clean(max);
   if (!mx) {
@@ -60,14 +60,16 @@ export function initEarningsChart(root, { min, max, nowMonth } = {}) {
     const val = Math.round((g * (n - j)) / n);
     yt[j].textContent = "£ " + (val >= 1000 ? val / 1000 + "k" : val);
   }
-  // "Long-term rental" baseline — proxy = min month until backend provides a real figure.
-  const baseBottom = (mn / g) * 100 + "%";
+  // "Long-term rental" baseline = backend ll_estimate (monthly); fall back to the
+  // short-term min month if the long-term figure is absent.
+  const lt = clean(longTerm) || mn;
+  const baseBottom = (lt / g) * 100 + "%";
   const base = root.querySelector('[data-chart="baseline"]');
   if (base) base.style.bottom = baseBottom;
   const baseLabel = root.querySelector('[data-chart="baseline-label"]');
   if (baseLabel) {
     baseLabel.style.bottom = baseBottom;
-    baseLabel.textContent = "£ " + fmt(mn);
+    baseLabel.textContent = "£ " + fmt(lt);
   }
 
   // Hover tooltip. NOTE: inner hooks are legacy class selectors
@@ -100,9 +102,9 @@ export function initEarningsChart(root, { min, max, nowMonth } = {}) {
   return true;
 }
 
-// Backward-compat shim: existing valuation code calls window.initChart(min, max).
+// Backward-compat shim: valuation code calls window.initChart(min, max, longTerm).
 if (typeof window !== "undefined") {
-  window.initChart = function (min, max) {
-    return initEarningsChart(document.querySelector("#chart-container"), { min, max });
+  window.initChart = function (min, max, longTerm) {
+    return initEarningsChart(document.querySelector("#chart-container"), { min, max, longTerm });
   };
 }

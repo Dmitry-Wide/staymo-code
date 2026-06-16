@@ -72,7 +72,14 @@ describe("initEarningsChart", () => {
     const bar6 = cols[6].querySelector('[data-chart="bar"]');
     expect(parseFloat(bar6.style.height)).toBeCloseTo((5000 / 6000) * 100, 1);
   });
-  it("positions and labels the long-term baseline (proxy = min)", () => {
+  it("positions and labels the long-term baseline from longTerm when provided", () => {
+    const root = fixture();
+    initEarningsChart(root, { min: 1000, max: 5000, longTerm: "£2,400", nowMonth: 0 });
+    const label = root.querySelector('[data-chart="baseline-label"]');
+    expect(label.textContent).toBe("£ 2,400");
+    expect(parseFloat(label.style.bottom)).toBeCloseTo((2400 / 6000) * 100, 1);
+  });
+  it("falls back to the min month for the baseline when longTerm is absent", () => {
     const root = fixture();
     initEarningsChart(root, { min: 1000, max: 5000, nowMonth: 0 });
     const label = root.querySelector('[data-chart="baseline-label"]');
