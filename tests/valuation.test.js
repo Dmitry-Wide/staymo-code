@@ -100,6 +100,22 @@ describe("applyOutputs", () => {
     expect(document.querySelector('[form_data="estimation"]').value).toBe("£1000 - £5000");
     expect(document.querySelector('[data-process="property_bedrooms"]').value).toBe("2");
   });
+
+  it("writes the address to every data-output=address element (loading/noresults/result)", () => {
+    document.body.innerHTML = `
+      <div start-loading><span data-output="address"></span></div>
+      <div start-noresults><span data-output="address"></span></div>
+      <div start-result><span data-output="address"></span></div>`;
+    applyOutputs(document, {
+      response: { minimum: "1000", maximum: "5000", show_address: "12 King St" },
+      fullAddress: "12 King St typed",
+      postcode: "E1",
+      beds: "2",
+    });
+    const all = document.querySelectorAll('[data-output="address"]');
+    expect(all).toHaveLength(3);
+    all.forEach((el) => expect(el.textContent).toBe("12 King St"));
+  });
 });
 
 describe("initValuation", () => {
@@ -139,6 +155,23 @@ describe("initValuation", () => {
     document.querySelector('[aria-label="Start Estimate"]').dispatchEvent(new Event("click", { bubbles: true }));
     await vi.waitFor(() =>
       expect(document.querySelector('[data-display="noresults"]').style.display).toBe("block")
+    );
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("fills the noresults address with the typed address when postcode is missing", async () => {
+    document.body.insertAdjacentHTML(
+      "beforeend",
+      `<div start-noresults data-display="noresults" style="display:none"><span data-output="address"></span></div>
+       <div data-input-id="address-search" data-value="10 Downing St"></div>
+       <button aria-label="Start Estimate">Go</button>`
+    );
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    initValuation();
+    document.querySelector('[aria-label="Start Estimate"]').dispatchEvent(new Event("click", { bubbles: true }));
+    await vi.waitFor(() =>
+      expect(document.querySelector('[start-noresults] [data-output="address"]').textContent).toBe("10 Downing St")
     );
     expect(fetchMock).not.toHaveBeenCalled();
   });

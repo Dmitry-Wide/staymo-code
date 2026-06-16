@@ -63,6 +63,12 @@ function setFieldValue(el, value) {
   }
 }
 
+// Write a value to EVERY matching output (the same data-output can appear on the
+// loading, noresults and result screens — a single querySelector would only fill one).
+function writeOutputs(doc, sel, val) {
+  doc.querySelectorAll(sel).forEach((el) => { el.textContent = val; });
+}
+
 export function applyOutputs(doc, { response, fullAddress, postcode, beds, leadstart }) {
   const occupancy = response?.occupancy || "84";
   const { minimum, maximum, annual, show_address: showAddress, ll_annual: llAnnual } = response || {};
@@ -70,10 +76,7 @@ export function applyOutputs(doc, { response, fullAddress, postcode, beds, leads
   setFieldValue(doc.querySelector('[data-process="property_bedrooms"]'), beds);
   setFieldValue(doc.querySelector('[data-process="property_address"]'), fullAddress || showAddress || postcode);
   setFieldValue(doc.querySelector('[data-process="sourcepath"]'), leadstart || "");
-  const set = (sel, val) => {
-    const el = doc.querySelector(sel);
-    if (el) el.textContent = val;
-  };
+  const set = (sel, val) => writeOutputs(doc, sel, val);
   const num = (v) => Number(String(v ?? "").replace(/[^0-9.]/g, "")) || 0;
   const money = (v) => `£${num(v).toLocaleString("en-GB")}`;
   set('[data-output="minimum-value"]', money(minimum));
@@ -106,7 +109,10 @@ function goTo(doc, key) {
   if (el) el.style.display = key === "result" ? "flex" : "block";
 }
 
-function showNoResultsState(doc) {
+// Show the noresults screen. applyOutputs never runs on this path, so write the
+// user's attempted address here too — the screen says "we couldn't find <address>".
+function showNoResultsState(doc, address) {
+  if (address != null) writeOutputs(doc, '[data-output="address"]', address);
   goTo(doc, "noresults");
 }
 
@@ -147,7 +153,7 @@ export function initValuation(doc = document) {
       const postcode = getValue(postcodeEl);
       const beds = getBedsValue(bedsEl);
       if (!postcode || !beds) {
-        showNoResultsState(doc);
+        showNoResultsState(doc, fullAddress || postcode);
         return;
       }
       const leadstart = (new URL(doc.location?.href || location.href).searchParams.get("sourcepath") || "").trim();
@@ -163,7 +169,7 @@ export function initValuation(doc = document) {
         })
         .then((response) => {
           if (!isValidEstimate(response)) {
-            showNoResultsState(doc);
+            showNoResultsState(doc, response.show_address || fullAddress || postcode);
             return;
           }
           applyOutputs(doc, { response, fullAddress, postcode, beds, leadstart });
@@ -171,7 +177,7 @@ export function initValuation(doc = document) {
           drawChartWhenVisible(doc, response.minimum, response.maximum, response.ll_estimate);
         })
         .catch(() => {
-          showNoResultsState(doc);
+          showNoResultsState(doc, fullAddress || postcode);
         });
     }, 0);
   });
