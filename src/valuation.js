@@ -126,12 +126,12 @@ export function applyOutputs(doc, { response, fullAddress, postcode, beds, leads
 
   // Main monthly estimate range from API.
   // Example API value: "£8,400 - £13,650"
+   
   const estimateRange = response?.estimate || `${money(minimum)} - ${money(maximum)}`;
-
-  set('[data-output="minimum-value"]', money(minimum));
-  set('[data-output="maximum-value"]', money(maximum));
-  set('[data-output="estimate-range"]', estimateRange);
-  set('[data-output="occupancy-value"]', `${occupancy}%`);
+      set('[data-output="minimum-value"]', money(minimum));
+      set('[data-output="maximum-value"]', money(maximum));
+      set('[data-output="estimate-range"]', estimateRange);
+      set('[data-output="occupancy-value"]', `${occupancy}%`);
 
   if (annual) {
     set('[data-output="annual-revenue"]', money(annual));
