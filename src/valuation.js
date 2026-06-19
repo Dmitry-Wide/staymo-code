@@ -81,7 +81,8 @@ export function applyOutputs(doc, { response, fullAddress, postcode, beds, leads
   const money = (v) => `£${num(v).toLocaleString("en-GB")}`;
   set('[data-output="minimum-value"]', money(minimum));
   set('[data-output="maximum-value"]', money(maximum));
-  set('[data-output="occupancy-value"]', `${occupancy}%`);
+  set('[data-output="estimate-range"]', response?.estimate || `${money(minimum)} - ${money(maximum)}`);
+set('[data-output="occupancy-value"]', `${occupancy}%`);
   if (annual) set('[data-output="annual-revenue"]', money(annual));
   // Uplift vs a standard long-term let = short-term annual − long-term annual (ll_annual).
   const annualN = num(annual),
