@@ -95,9 +95,7 @@ export function applyOutputs(doc, { response, fullAddress, postcode, beds, leads
     if (occN) set('[data-output="nightly-value"]', money(Math.round(monthly / (30 * (occN / 100)))));
   }
   set('[data-output="address"]', showAddress || fullAddress || postcode);
-  const monthlyMinimum = response?.minimum;
-const monthlyMaximum = response?.maximum;
-const estimationValue = `${money(monthlyMinimum)} - ${money(monthlyMaximum)}`;
+const estimationValue = response?.estimate || `${money(response?.minimum)} - ${money(response?.maximum)}`;
 const estimationField = doc.querySelector('[form_data="estimation"]');
 
 function writeEstimationField() {
@@ -115,11 +113,10 @@ setTimeout(writeEstimationField, 1000);
 
 window.estimateDebug = {
   fullResponse: response,
+  estimate: response?.estimate,
   minimum: response?.minimum,
   maximum: response?.maximum,
   annual: response?.annual,
-  monthly_minimum: response?.monthly_minimum,
-  monthly_maximum: response?.monthly_maximum,
   estimationValue,
   fieldValue: estimationField ? estimationField.value : null,
   fieldAttribute: estimationField ? estimationField.getAttribute("value") : null,
