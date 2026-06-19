@@ -113,13 +113,22 @@ window.estimateDebug = {
 };
 
 if (estimationField) {
-  setFieldValue(estimationField, estimationValue);
+  estimationField.value = estimationValue;
+  estimationField.setAttribute("value", estimationValue);
+
+  estimationField.dispatchEvent(new Event("input", { bubbles: true }));
+  estimationField.dispatchEvent(new Event("change", { bubbles: true }));
 
   window.estimateDebug.estimationFieldAfter = estimationField.value;
+  window.estimateDebug.estimationAttributeAfter = estimationField.getAttribute("value");
 
   setTimeout(() => {
     window.estimateDebug.estimationFieldAfter1Second = estimationField.value;
-    localStorage.setItem("estimateDebug", JSON.stringify(window.estimateDebug, null, 2));
+    window.estimateDebug.estimationAttributeAfter1Second = estimationField.getAttribute("value");
+
+    try {
+      localStorage.setItem("estimateDebug", JSON.stringify(window.estimateDebug, null, 2));
+    } catch (e) {}
   }, 1000);
 }
 }
