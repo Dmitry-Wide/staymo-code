@@ -110,7 +110,12 @@ writeEstimationField();
 setTimeout(writeEstimationField, 100);
 setTimeout(writeEstimationField, 500);
 setTimeout(writeEstimationField, 1000);
-
+window.dispatchEvent(new CustomEvent("staymo:estimate-ready", {
+  detail: {
+    response,
+    estimationValue
+  }
+}));
 window.estimateDebug = {
   fullResponse: response,
   estimate: response?.estimate,
