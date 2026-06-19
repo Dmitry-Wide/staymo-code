@@ -95,13 +95,33 @@ export function applyOutputs(doc, { response, fullAddress, postcode, beds, leads
     if (occN) set('[data-output="nightly-value"]', money(Math.round(monthly / (30 * (occN / 100)))));
   }
   set('[data-output="address"]', showAddress || fullAddress || postcode);
-   const monthlyMinimum = response?.monthly_minimum;
+  const monthlyMinimum = response?.monthly_minimum;
 const monthlyMaximum = response?.monthly_maximum;
+const estimationValue = `${money(monthlyMinimum)} - ${money(monthlyMaximum)}`;
+const estimationField = doc.querySelector('[form_data="estimation"]');
 
-setFieldValue(
-  doc.querySelector('[form_data="estimation"]'),
-  `${money(monthlyMinimum)} - ${money(monthlyMaximum)}`
-);
+window.estimateDebug = {
+  fullResponse: response,
+  minimum: response?.minimum,
+  maximum: response?.maximum,
+  annual: response?.annual,
+  monthly_minimum: response?.monthly_minimum,
+  monthly_maximum: response?.monthly_maximum,
+  estimationValue,
+  estimationField,
+  estimationFieldBefore: estimationField ? estimationField.value : null
+};
+
+if (estimationField) {
+  setFieldValue(estimationField, estimationValue);
+
+  window.estimateDebug.estimationFieldAfter = estimationField.value;
+
+  setTimeout(() => {
+    window.estimateDebug.estimationFieldAfter1Second = estimationField.value;
+    localStorage.setItem("estimateDebug", JSON.stringify(window.estimateDebug, null, 2));
+  }, 1000);
+}
 }
 
 // Drive the funnel transition. Prefers the engine's screen controller; falls back
