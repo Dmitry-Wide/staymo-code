@@ -174,14 +174,27 @@ export function initValuation(doc = document) {
           return r.json();
         })
         .then((response) => {
-          if (!isValidEstimate(response)) {
-            showNoResultsState(doc, response.show_address || fullAddress || postcode);
-            return;
-          }
-          applyOutputs(doc, { response, fullAddress, postcode, beds, leadstart });
-          goTo(doc, "result");
-          drawChartWhenVisible(doc, response.minimum, response.maximum, response.ll_estimate);
-        })
+  // DEBUG: store the API response so we can inspect it on the live site
+  window.latestEstimateApiResponse = response;
+
+  try {
+    localStorage.setItem(
+      "latestEstimateApiResponse",
+      JSON.stringify(response, null, 2)
+    );
+  } catch (e) {}
+
+  console.log("Estimate API response:", response);
+
+  if (!isValidEstimate(response)) {
+    showNoResultsState(doc, response.show_address || fullAddress || postcode);
+    return;
+  }
+
+  applyOutputs(doc, { response, fullAddress, postcode, beds, leadstart });
+  goTo(doc, "result");
+  drawChartWhenVisible(doc, response.minimum, response.maximum, response.ll_estimate);
+})
         .catch(() => {
           showNoResultsState(doc, fullAddress || postcode);
         });
