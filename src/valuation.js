@@ -95,15 +95,7 @@ export function applyOutputs(doc, { response, fullAddress, postcode, beds, leads
     if (occN) set('[data-output="nightly-value"]', money(Math.round(monthly / (30 * (occN / 100)))));
   }
   set('[data-output="address"]', showAddress || fullAddress || postcode);
-
-// Form field should always receive the monthly estimate range from the API
-const monthlyMinimum = response?.monthly_minimum;
-const monthlyMaximum = response?.monthly_maximum;
-
-setFieldValue(
-  doc.querySelector('[form_data="estimation"]'),
-  `${money(monthlyMinimum)} - ${money(monthlyMaximum)}`
-);
+   setFieldValue(doc.querySelector('[form_data="estimation"]'), `£${minimum} - £${maximum}`);
 }
 
 // Drive the funnel transition. Prefers the engine's screen controller; falls back
