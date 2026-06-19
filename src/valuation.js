@@ -100,6 +100,19 @@ const monthlyMaximum = response?.monthly_maximum;
 const estimationValue = `${money(monthlyMinimum)} - ${money(monthlyMaximum)}`;
 const estimationField = doc.querySelector('[form_data="estimation"]');
 
+function writeEstimationField() {
+  if (!estimationField) return;
+
+  estimationField.value = estimationValue;
+  estimationField.defaultValue = estimationValue;
+  estimationField.setAttribute("value", estimationValue);
+}
+
+writeEstimationField();
+setTimeout(writeEstimationField, 100);
+setTimeout(writeEstimationField, 500);
+setTimeout(writeEstimationField, 1000);
+
 window.estimateDebug = {
   fullResponse: response,
   minimum: response?.minimum,
@@ -108,29 +121,14 @@ window.estimateDebug = {
   monthly_minimum: response?.monthly_minimum,
   monthly_maximum: response?.monthly_maximum,
   estimationValue,
-  estimationField,
-  estimationFieldBefore: estimationField ? estimationField.value : null
+  fieldValue: estimationField ? estimationField.value : null,
+  fieldAttribute: estimationField ? estimationField.getAttribute("value") : null,
+  fieldDefaultValue: estimationField ? estimationField.defaultValue : null
 };
 
-if (estimationField) {
-  estimationField.value = estimationValue;
-  estimationField.setAttribute("value", estimationValue);
-
-  estimationField.dispatchEvent(new Event("input", { bubbles: true }));
-  estimationField.dispatchEvent(new Event("change", { bubbles: true }));
-
-  window.estimateDebug.estimationFieldAfter = estimationField.value;
-  window.estimateDebug.estimationAttributeAfter = estimationField.getAttribute("value");
-
-  setTimeout(() => {
-    window.estimateDebug.estimationFieldAfter1Second = estimationField.value;
-    window.estimateDebug.estimationAttributeAfter1Second = estimationField.getAttribute("value");
-
-    try {
-      localStorage.setItem("estimateDebug", JSON.stringify(window.estimateDebug, null, 2));
-    } catch (e) {}
-  }, 1000);
-}
+try {
+  localStorage.setItem("estimateDebug", JSON.stringify(window.estimateDebug, null, 2));
+} catch (e) {}
 }
 
 // Drive the funnel transition. Prefers the engine's screen controller; falls back
