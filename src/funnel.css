@@ -18,16 +18,10 @@
 }
 
 /* ---- Step content swap inside the frame ---- */
-[start-step-0]:not(.is-active),
-[start-step-1]:not(.is-active),
-[start-step-2]:not(.is-active),
-[start-step-3]:not(.is-active) {
+[start-step]:not(.is-active) {
   display: none !important;
 }
-[start-step-0].is-active,
-[start-step-1].is-active,
-[start-step-2].is-active,
-[start-step-3].is-active {
+[start-step].is-active {
   animation: est-step-in 0.35s ease both;
 }
 
@@ -74,10 +68,7 @@
   [start-loading].is-active,
   [start-result].is-active,
   [start-noresults].is-active,
-  [start-step-0].is-active,
-  [start-step-1].is-active,
-  [start-step-2].is-active,
-  [start-step-3].is-active,
+  [start-step].is-active,
   [start-photo].is-active {
     animation: none;
   }
