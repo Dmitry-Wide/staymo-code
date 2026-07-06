@@ -1,11 +1,9 @@
 /* Funnel engine — state only; animation lives in funnel.css (toggled via .is-active).
-   Persistent frame (photo + card content + progress) for steps 0-3; full-screen
-   loading / result / noresults shown by deactivating the frame. Flow:
-   step0 (address+beds, validated) -> step1/step2 radios auto-advance -> step3 contact
-   form -> loading -> result|noresults (valuation calls window.estGoTo). JS binds to
-   contract attributes only; no GSAP dependency. */
-
-export const STEP_COUNT = 4;
+   Data-driven: steps are all [start-step] under [start-frame] in DOM order. The step with
+   [start-start-button] is the address step (validated); the step with [start-ready-button]
+   is the contact step (validated -> loading). Every other step is a radio step (auto-advance
+   on radio change / explicit Next / Back). Adding/removing a screen is an HTML-only change.
+   valuation.js drives the final transitions via window.estGoTo. No GSAP dependency. */
 
 export function isFilled(el) {
   return !!el && String(el.value ?? "").trim().length > 0;
@@ -34,8 +32,8 @@ function setStepError(step, on) {
   if (err) err.classList.toggle("is-active", on);
 }
 
-// step3 contact form: name + valid email + phone + consent. Marks invalid fields.
-export function validateStep3(step) {
+// contact step: name + valid email + phone + consent. Marks invalid fields.
+export function validateContact(step) {
   if (!step) return true;
   let ok = true;
   const name = step.querySelector('[data-input="full-name"]');
@@ -59,39 +57,45 @@ export function validateStep3(step) {
   return ok;
 }
 
-// Progress fill width for a given 0-based step.
-export function progressWidth(step) {
-  return `${((step + 1) / STEP_COUNT) * 100}%`;
+// Back-compat alias (previous name for the contact-step validator).
+export const validateStep3 = validateContact;
+
+// Progress fill width for a 0-based step within `count` steps.
+export function progressWidth(step, count) {
+  return `${((step + 1) / count) * 100}%`;
 }
 
 export function initStepper(doc = document) {
   const $ = (sel, root = doc) => root.querySelector(sel);
-  const $$ = (sel, root = doc) => Array.from(root.querySelectorAll(sel));
   const setActive = (el, on) => el && el.classList.toggle("is-active", on);
 
   const frame = $("[start-frame]");
-  const contents = {
-    0: $("[start-step-0]"),
-    1: $("[start-step-1]"),
-    2: $("[start-step-2]"),
-    3: $("[start-step-3]"),
-  };
+  if (!frame) return;
+
+  const steps = Array.from(frame.querySelectorAll("[start-step]"));
+  const count = steps.length;
+  if (!count) return;
+
+  const addressIdx = steps.findIndex((s) => s.querySelector("[start-start-button]"));
+  const contactIdx = steps.findIndex((s) => s.querySelector("[start-ready-button]"));
+
   const finals = {
     loading: $("[start-loading]"),
     result: $("[start-result]"),
     noresults: $("[start-noresults]"),
   };
-  const photos = $$("[start-photo]");
+  const photos = Array.from(doc.querySelectorAll("[start-photo]"));
   const progressFill = $("[start-progress-fill]");
   const counter = $("[start-step-counter]");
 
   function setStep(n) {
+    if (n < 0 || n >= count) return;
     setActive(frame, true);
     Object.values(finals).forEach((el) => setActive(el, false));
-    Object.entries(contents).forEach(([k, el]) => setActive(el, Number(k) === n));
+    steps.forEach((el, i) => setActive(el, i === n));
     photos.forEach((p) => setActive(p, Number(p.getAttribute("data-step")) === n));
-    if (progressFill) progressFill.style.width = progressWidth(n);
-    if (counter) counter.textContent = `${n + 1} of ${STEP_COUNT} steps`;
+    if (progressFill) progressFill.style.width = progressWidth(n, count);
+    if (counter) counter.textContent = `${n + 1} of ${count} steps`;
   }
 
   function showFinal(key) {
@@ -110,70 +114,63 @@ export function initStepper(doc = document) {
   // Initial state: step 0.
   setStep(0);
 
-  // step0 -> step1 (validate address + beds)
-  const btnStart = $("[start-start-button]");
-  const inpAddress = $('[data-input-id="address-search"]');
-  const inpRooms = $("[data-rooms-input]");
-  if (btnStart) {
-    btnStart.addEventListener("click", () => {
-      if (validateStartInputs(inpAddress, inpRooms)) setStep(1);
-    });
+  // address step -> next step (validate address + beds)
+  const addressStep = steps[addressIdx];
+  if (addressStep) {
+    const btnStart = addressStep.querySelector("[start-start-button]");
+    const inpAddress = $('[data-input-id="address-search"]');
+    const inpRooms = $("[data-rooms-input]");
+    if (btnStart) {
+      btnStart.addEventListener("click", () => {
+        if (validateStartInputs(inpAddress, inpRooms)) setStep(addressIdx + 1);
+      });
+    }
   }
 
-  // step1 -> step2, step2 -> step3: radio auto-advance
-  [
-    [contents[1], 2],
-    [contents[2], 3],
-  ].forEach(([step, next]) => {
-    if (!step) return;
+  // radio steps (every step that is neither address nor contact):
+  // auto-advance on radio change + explicit Next button.
+  steps.forEach((step, idx) => {
+    if (idx === addressIdx || idx === contactIdx) return;
     step.addEventListener("change", (e) => {
       if (e.target.matches('input[type="radio"]')) {
         setStepError(step, false);
-        setTimeout(() => setStep(next), 200);
+        setTimeout(() => setStep(idx + 1), 200);
       }
     });
+    const nb = step.querySelector("[start-next]");
+    if (nb) {
+      nb.addEventListener("click", () => {
+        if (!step.querySelector('input[type="radio"]:checked')) {
+          setStepError(step, true);
+          return;
+        }
+        setStepError(step, false);
+        setStep(idx + 1);
+      });
+    }
   });
 
-  // explicit Next buttons (complement radio auto-advance; needed after Back,
-  // when the already-checked radio fires no change event)
-  [
-    [contents[1], 2],
-    [contents[2], 3],
-  ].forEach(([step, next]) => {
-    const nb = step ? $("[start-next]", step) : null;
-    if (!nb) return;
-    nb.addEventListener("click", () => {
-      if (!step.querySelector('input[type="radio"]:checked')) {
-        setStepError(step, true);
-        return;
-      }
-      setStepError(step, false);
-      setStep(next);
-    });
-  });
-
-  // step3 submit -> loading. Engine runs before valuation (its tag is earlier), so
+  // contact submit -> loading. Engine runs before valuation (its tag is earlier), so
   // an invalid form stops here (stopImmediatePropagation) and valuation never fires.
-  const submit = contents[3] ? $("[start-ready-button]", contents[3]) : null;
-  if (submit) {
-    submit.addEventListener("click", (e) => {
-      if (!validateStep3(contents[3])) {
-        e.stopImmediatePropagation();
-        e.preventDefault();
-        return;
-      }
-      showFinal("loading");
-    });
+  const contactStep = steps[contactIdx];
+  if (contactStep) {
+    const submit = contactStep.querySelector("[start-ready-button]");
+    if (submit) {
+      submit.addEventListener("click", (e) => {
+        if (!validateContact(contactStep)) {
+          e.stopImmediatePropagation();
+          e.preventDefault();
+          return;
+        }
+        showFinal("loading");
+      });
+    }
   }
 
-  // back buttons
-  [
-    [contents[1], 0],
-    [contents[2], 1],
-    [contents[3], 2],
-  ].forEach(([step, target]) => {
-    const b = step ? $("[start-step-back]", step) : null;
-    if (b) b.addEventListener("click", () => setStep(target));
+  // back buttons -> previous step
+  steps.forEach((step, idx) => {
+    const b = step.querySelector("[start-step-back]");
+    if (b) b.addEventListener("click", () => setStep(idx - 1));
   });
 
   // "Start again" from the result/noresults screen -> back to step 0

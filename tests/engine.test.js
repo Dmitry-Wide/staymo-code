@@ -3,6 +3,7 @@ import {
   isFilled,
   validateStartInputs,
   isValidEmail,
+  validateContact,
   validateStep3,
   progressWidth,
   initStepper,
@@ -17,18 +18,21 @@ describe("isValidEmail", () => {
   });
 });
 
-describe("validateStep3", () => {
+describe("validateContact (aka validateStep3)", () => {
+  it("is the same function under both names", () => {
+    expect(validateStep3).toBe(validateContact);
+  });
   it("false until name+email+phone+consent valid", () => {
     document.body.innerHTML = `<div id="s">
       <input data-input="full-name"><input data-input="email">
       <input data-input="phone"><input type="checkbox" data-input="consent"></div>`;
     const s = document.getElementById("s");
-    expect(validateStep3(s)).toBe(false);
+    expect(validateContact(s)).toBe(false);
     s.querySelector('[data-input="full-name"]').value = "Jane";
     s.querySelector('[data-input="email"]').value = "jane@x.io";
     s.querySelector('[data-input="phone"]').value = "07700900123";
     s.querySelector('[data-input="consent"]').checked = true;
-    expect(validateStep3(s)).toBe(true);
+    expect(validateContact(s)).toBe(true);
   });
 });
 
@@ -62,25 +66,35 @@ describe("validateStartInputs", () => {
 });
 
 describe("progressWidth", () => {
-  it("maps 0-based step to quarter width", () => {
-    expect(progressWidth(0)).toBe("25%");
-    expect(progressWidth(1)).toBe("50%");
-    expect(progressWidth(3)).toBe("100%");
+  it("maps 0-based step to width within count", () => {
+    expect(progressWidth(0, 4)).toBe("25%");
+    expect(progressWidth(1, 4)).toBe("50%");
+    expect(progressWidth(3, 4)).toBe("100%");
+    expect(progressWidth(2, 6)).toBe("50%");
   });
 });
 
-function funnelFixture() {
+// Data-driven fixture: address step (start-start-button) + (nSteps-2) radio steps +
+// contact step (start-ready-button). All steps carry a bare `start-step`.
+function funnelFixture(nSteps = 4) {
+  const photos = Array.from(
+    { length: nSteps },
+    (_, i) => `<span start-photo data-step="${i}"></span>`
+  ).join("");
+  const mid = Array.from(
+    { length: nSteps - 2 },
+    () =>
+      `<div start-step><label><input type="radio" name="r"></label><button start-next></button><button start-step-back></button><div start-step-error></div></div>`
+  ).join("");
   document.body.innerHTML = `
     <div start-frame>
-      <span start-photo data-step="0"></span><span start-photo data-step="1"></span>
-      <span start-photo data-step="2"></span><span start-photo data-step="3"></span>
-      <div start-step-0>
+      ${photos}
+      <div start-step>
         <input start-start-button type="button">
         <input data-input-id="address-search"><input data-rooms-input>
       </div>
-      <div start-step-1><label><input type="radio" name="s1"></label><button start-next></button><button start-step-back></button><div start-step-error></div></div>
-      <div start-step-2><label><input type="radio" name="s2"></label><button start-next></button><button start-step-back></button><div start-step-error></div></div>
-      <div start-step-3>
+      ${mid}
+      <div start-step>
         <input data-input="full-name"><input data-input="email"><input data-input="phone">
         <input type="checkbox" data-input="consent">
         <button start-ready-button></button><button start-step-back></button><div start-step-error></div>
@@ -92,8 +106,22 @@ function funnelFixture() {
     <div start-noresults></div>`;
 }
 
+const steps = () => document.querySelectorAll("[start-frame] [start-step]");
+const stepEl = (i) => steps()[i];
+const stepActive = (i) => stepEl(i).classList.contains("is-active");
 const active = (sel) => document.querySelector(sel).classList.contains("is-active");
 const width = () => document.querySelector("[start-progress-fill]").style.width;
+
+function fillAddress() {
+  document.querySelector('[data-input-id="address-search"]').value = "addr";
+  document.querySelector("[data-rooms-input]").value = "2";
+}
+function fillContact() {
+  document.querySelector('[data-input="full-name"]').value = "Jane Doe";
+  document.querySelector('[data-input="email"]').value = "jane@x.io";
+  document.querySelector('[data-input="phone"]').value = "07700900123";
+  document.querySelector('[data-input="consent"]').checked = true;
+}
 
 describe("initStepper — funnel flow", () => {
   beforeEach(() => vi.useFakeTimers());
@@ -103,9 +131,9 @@ describe("initStepper — funnel flow", () => {
     funnelFixture();
     initStepper();
     expect(active("[start-frame]")).toBe(true);
-    expect(active("[start-step-0]")).toBe(true);
+    expect(stepActive(0)).toBe(true);
     expect(active('[start-photo][data-step="0"]')).toBe(true);
-    expect(active("[start-step-1]")).toBe(false);
+    expect(stepActive(1)).toBe(false);
     expect(width()).toBe("25%");
   });
 
@@ -113,20 +141,19 @@ describe("initStepper — funnel flow", () => {
     funnelFixture();
     initStepper();
     document.querySelector("[start-start-button]").click();
-    expect(active("[start-step-1]")).toBe(false);
+    expect(stepActive(1)).toBe(false);
     expect(
       document.querySelector('[data-input-id="address-search"]').getAttribute("data-invalid")
     ).toBe("true");
   });
 
-  it("advances step0 -> step1 when filled: step1 + photo1 active, progress 50%", () => {
+  it("advances step0 -> step1 when filled: step1 + photo1 active, progress 50%, counter", () => {
     funnelFixture();
-    document.querySelector('[data-input-id="address-search"]').value = "addr";
-    document.querySelector("[data-rooms-input]").value = "2";
+    fillAddress();
     initStepper();
     document.querySelector("[start-start-button]").click();
-    expect(active("[start-step-1]")).toBe(true);
-    expect(active("[start-step-0]")).toBe(false);
+    expect(stepActive(1)).toBe(true);
+    expect(stepActive(0)).toBe(false);
     expect(active('[start-photo][data-step="1"]')).toBe(true);
     expect(width()).toBe("50%");
     expect(document.querySelector("[start-step-counter]").textContent).toBe("2 of 4 steps");
@@ -134,35 +161,48 @@ describe("initStepper — funnel flow", () => {
 
   it("auto-advances step1 -> step2 -> step3 on radio change", () => {
     funnelFixture();
-    document.querySelector('[data-input-id="address-search"]').value = "addr";
-    document.querySelector("[data-rooms-input]").value = "2";
+    fillAddress();
     initStepper();
     document.querySelector("[start-start-button]").click();
-    const r1 = document.querySelector('[start-step-1] input[type="radio"]');
+    const r1 = stepEl(1).querySelector('input[type="radio"]');
     r1.checked = true;
     r1.dispatchEvent(new Event("change", { bubbles: true }));
     vi.advanceTimersByTime(200);
-    expect(active("[start-step-2]")).toBe(true);
-    const r2 = document.querySelector('[start-step-2] input[type="radio"]');
+    expect(stepActive(2)).toBe(true);
+    const r2 = stepEl(2).querySelector('input[type="radio"]');
     r2.checked = true;
     r2.dispatchEvent(new Event("change", { bubbles: true }));
     vi.advanceTimersByTime(200);
-    expect(active("[start-step-3]")).toBe(true);
+    expect(stepActive(3)).toBe(true);
     expect(width()).toBe("100%");
   });
 
-  function fillStep3() {
-    document.querySelector('[data-input="full-name"]').value = "Jane Doe";
-    document.querySelector('[data-input="email"]').value = "jane@x.io";
-    document.querySelector('[data-input="phone"]').value = "07700900123";
-    document.querySelector('[data-input="consent"]').checked = true;
-  }
+  it("derives count from DOM: 6 steps => step1 shows '2 of 6 steps'", () => {
+    funnelFixture(6);
+    fillAddress();
+    initStepper();
+    document.querySelector("[start-start-button]").click();
+    expect(stepActive(1)).toBe(true);
+    expect(document.querySelector("[start-step-counter]").textContent).toBe("2 of 6 steps");
+    // last step is the contact step regardless of count
+    for (let i = 1; i < 5; i++) {
+      const r = stepEl(i).querySelector('input[type="radio"]');
+      r.checked = true;
+      r.dispatchEvent(new Event("change", { bubbles: true }));
+      vi.advanceTimersByTime(200);
+    }
+    expect(stepActive(5)).toBe(true);
+    expect(width()).toBe("100%");
+    fillContact();
+    document.querySelector("[start-ready-button]").click();
+    expect(active("[start-loading]")).toBe(true);
+  });
 
-  it("step3 submit (valid) shows loading and deactivates the frame", () => {
+  it("contact submit (valid) shows loading and deactivates the frame", () => {
     funnelFixture();
     initStepper();
     window.estGoTo(3);
-    fillStep3();
+    fillContact();
     document.querySelector("[start-ready-button]").click();
     expect(active("[start-loading]")).toBe(true);
     expect(active("[start-frame]")).toBe(false);
@@ -172,18 +212,18 @@ describe("initStepper — funnel flow", () => {
     funnelFixture();
     initStepper();
     window.estGoTo(1);
-    document.querySelector("[start-step-1] [start-next]").click();
-    expect(active("[start-step-2]")).toBe(false);
-    expect(document.querySelector("[start-step-1] [start-step-error]").classList.contains("is-active")).toBe(true);
+    stepEl(1).querySelector("[start-next]").click();
+    expect(stepActive(2)).toBe(false);
+    expect(stepEl(1).querySelector("[start-step-error]").classList.contains("is-active")).toBe(true);
   });
 
-  it("step3 submit (invalid) blocks loading and marks fields", () => {
+  it("contact submit (invalid) blocks loading and marks fields", () => {
     funnelFixture();
     initStepper();
     window.estGoTo(3);
     document.querySelector("[start-ready-button]").click();
     expect(active("[start-loading]")).toBe(false);
-    expect(active("[start-step-3]")).toBe(true);
+    expect(stepActive(3)).toBe(true);
     expect(document.querySelector('[data-input="email"]').getAttribute("data-invalid")).toBe("true");
     expect(document.querySelector('[data-input="consent"]').getAttribute("data-invalid")).toBe("true");
   });
@@ -216,15 +256,15 @@ describe("initStepper — funnel flow", () => {
     funnelFixture();
     initStepper();
     window.estGoTo(1);
-    const r1 = document.querySelector('[start-step-1] input[type="radio"]');
+    const r1 = stepEl(1).querySelector('input[type="radio"]');
     r1.checked = true;
     r1.dispatchEvent(new Event("change", { bubbles: true }));
     vi.advanceTimersByTime(200); // auto-advanced to step2
-    document.querySelector("[start-step-2] [start-step-back]").click(); // back to step1
-    expect(active("[start-step-1]")).toBe(true);
+    stepEl(2).querySelector("[start-step-back]").click(); // back to step1
+    expect(stepActive(1)).toBe(true);
     // radio still checked -> re-click fires no change; Next must still advance
-    document.querySelector("[start-step-1] [start-next]").click();
-    expect(active("[start-step-2]")).toBe(true);
+    stepEl(1).querySelector("[start-next]").click();
+    expect(stepActive(2)).toBe(true);
   });
 
   it("Start again from result returns to step0", () => {
@@ -232,7 +272,7 @@ describe("initStepper — funnel flow", () => {
     initStepper();
     window.estGoTo("result");
     document.querySelector("[start-restart]").click();
-    expect(active("[start-step-0]")).toBe(true);
+    expect(stepActive(0)).toBe(true);
     expect(active("[start-frame]")).toBe(true);
     expect(active("[start-result]")).toBe(false);
   });
@@ -241,8 +281,8 @@ describe("initStepper — funnel flow", () => {
     funnelFixture();
     initStepper();
     window.estGoTo(1);
-    document.querySelector("[start-step-1] [start-step-back]").click();
-    expect(active("[start-step-0]")).toBe(true);
-    expect(active("[start-step-1]")).toBe(false);
+    stepEl(1).querySelector("[start-step-back]").click();
+    expect(stepActive(0)).toBe(true);
+    expect(stepActive(1)).toBe(false);
   });
 });
