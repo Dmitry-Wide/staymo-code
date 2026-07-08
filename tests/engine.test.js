@@ -1,11 +1,13 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import {
   isFilled,
+  isResolvedAddress,
   validateStartInputs,
   isValidEmail,
   validateContact,
   validateStep3,
   progressWidth,
+  hasStartPrefill,
   initStepper,
 } from "../src/engine.js";
 
@@ -39,6 +41,17 @@ describe("validateContact (aka validateStep3)", () => {
 beforeEach(() => {
   document.body.innerHTML = "";
   delete window.estGoTo;
+  window.history.pushState({}, "", "/"); // reset URL prefill params between tests
+  document.documentElement.classList.remove("est-prefill", "est-ready");
+});
+
+describe("hasStartPrefill", () => {
+  it("true only when address + postal-code + beds are all present", () => {
+    expect(hasStartPrefill("?address=a&postal-code=SW1A1AA&beds=2")).toBe(true);
+    expect(hasStartPrefill("?address=a&beds=2")).toBe(false);
+    expect(hasStartPrefill("?postal-code=SW1A1AA&beds=2")).toBe(false);
+    expect(hasStartPrefill("")).toBe(false);
+  });
 });
 
 describe("isFilled", () => {
@@ -52,15 +65,35 @@ describe("isFilled", () => {
   });
 });
 
+describe("isResolvedAddress", () => {
+  it("true only for a dropdown pick or a resolved postcode; false for bare text", () => {
+    const a = document.createElement("input");
+    expect(isResolvedAddress(a, null)).toBe(false); // empty
+    a.value = "123123";
+    expect(isResolvedAddress(a, null)).toBe(false); // typed junk, no postcode
+    const p = document.createElement("input");
+    p.value = "SW1V 1AE";
+    expect(isResolvedAddress(a, p)).toBe(true); // resolved postcode
+    p.value = "";
+    a.dataset.placeSelected = "1";
+    expect(isResolvedAddress(a, p)).toBe(true); // dropdown pick, no postcode needed
+  });
+});
+
 describe("validateStartInputs", () => {
-  it("marks invalid and returns false when either empty", () => {
+  it("marks invalid and returns false until address is resolved + beds filled", () => {
     const a = document.createElement("input");
     const r = document.createElement("input");
-    expect(validateStartInputs(a, r)).toBe(false);
+    const p = document.createElement("input");
+    expect(validateStartInputs(a, r, p)).toBe(false);
     expect(a.getAttribute("data-invalid")).toBe("true");
+    // bare address text is not enough — needs a resolved postcode or a dropdown pick
     a.value = "addr";
     r.value = "2";
-    expect(validateStartInputs(a, r)).toBe(true);
+    expect(validateStartInputs(a, r, p)).toBe(false);
+    expect(a.getAttribute("data-invalid")).toBe("true");
+    p.value = "SW1V 1AE";
+    expect(validateStartInputs(a, r, p)).toBe(true);
     expect(a.getAttribute("data-invalid")).toBe(null);
   });
 });
@@ -91,7 +124,7 @@ function funnelFixture(nSteps = 4) {
       ${photos}
       <div start-step>
         <input start-start-button type="button">
-        <input data-input-id="address-search"><input data-rooms-input>
+        <input data-input-id="address-search"><input data-input-id="postal-code-result"><input data-rooms-input>
       </div>
       ${mid}
       <div start-step>
@@ -114,6 +147,8 @@ const width = () => document.querySelector("[start-progress-fill]").style.width;
 
 function fillAddress() {
   document.querySelector('[data-input-id="address-search"]').value = "addr";
+  // a resolved postcode marks the address as real (soft gate)
+  document.querySelector('[data-input-id="postal-code-result"]').value = "SW1V 1AE";
   document.querySelector("[data-rooms-input]").value = "2";
 }
 function fillContact() {
@@ -147,6 +182,19 @@ describe("initStepper — funnel flow", () => {
     ).toBe("true");
   });
 
+  it("blocks step0 -> step1 when address is typed but not resolved (e.g. '123123')", () => {
+    funnelFixture();
+    document.querySelector('[data-input-id="address-search"]').value = "123123";
+    document.querySelector("[data-rooms-input]").value = "2";
+    // no postcode filled, no dropdown pick -> not a real address
+    initStepper();
+    document.querySelector("[start-start-button]").click();
+    expect(stepActive(1)).toBe(false);
+    expect(
+      document.querySelector('[data-input-id="address-search"]').getAttribute("data-invalid")
+    ).toBe("true");
+  });
+
   it("advances step0 -> step1 when filled: step1 + photo1 active, progress 50%, counter", () => {
     funnelFixture();
     fillAddress();
@@ -157,6 +205,24 @@ describe("initStepper — funnel flow", () => {
     expect(active('[start-photo][data-step="1"]')).toBe(true);
     expect(width()).toBe("50%");
     expect(document.querySelector("[start-step-counter]").textContent).toBe("2 of 4 steps");
+  });
+
+  it("starts past the address step when arriving with a full URL prefill (no flash)", () => {
+    funnelFixture();
+    window.history.pushState({}, "", "/?address=10+Downing+St&postal-code=SW1A+2AA&beds=2");
+    initStepper();
+    expect(stepActive(0)).toBe(false);
+    expect(stepActive(1)).toBe(true);
+    expect(width()).toBe("50%");
+    expect(document.documentElement.classList.contains("est-ready")).toBe(true);
+  });
+
+  it("starts on step0 when the URL prefill is incomplete", () => {
+    funnelFixture();
+    window.history.pushState({}, "", "/?address=10+Downing+St"); // no postal-code/beds
+    initStepper();
+    expect(stepActive(0)).toBe(true);
+    expect(stepActive(1)).toBe(false);
   });
 
   it("auto-advances step1 -> step2 -> step3 on radio change", () => {

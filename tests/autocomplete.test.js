@@ -1,12 +1,70 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import {
   extractPostal,
   getNodeIndex,
   findNearestPostalInput,
+  isRealAddress,
 } from "../src/autocomplete.js";
 
 beforeEach(() => {
   document.body.innerHTML = "";
+});
+
+describe("isRealAddress", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+  const mkAddr = (value, placeSelected) => {
+    const a = document.createElement("input");
+    a.value = value;
+    if (placeSelected) a.dataset.placeSelected = placeSelected;
+    return a;
+  };
+  const mkPostal = (value) => {
+    const p = document.createElement("input");
+    if (value) p.value = value;
+    return p;
+  };
+  const stubGeocode = (postal) =>
+    vi.stubGlobal("fetch", vi.fn(async () => ({
+      json: async () =>
+        postal
+          ? { status: "OK", results: [{ address_components: [{ types: ["postal_code"], long_name: postal }] }] }
+          : { status: "ZERO_RESULTS", results: [] },
+    })));
+
+  it("true for a dropdown pick, without any geocode call", async () => {
+    const fetchSpy = vi.fn();
+    vi.stubGlobal("fetch", fetchSpy);
+    expect(await isRealAddress(mkAddr("anything", "1"), mkPostal())).toBe(true);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("true when a postcode is already filled, without geocode", async () => {
+    const fetchSpy = vi.fn();
+    vi.stubGlobal("fetch", fetchSpy);
+    expect(await isRealAddress(mkAddr("25 Wilton Road"), mkPostal("SW1V 1LW"))).toBe(true);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("false for typed junk that does not geocode ('123123')", async () => {
+    stubGeocode(null);
+    expect(await isRealAddress(mkAddr("123123"), mkPostal())).toBe(false);
+  });
+
+  it("true for a valid typed address and fills the postcode input", async () => {
+    stubGeocode("SW1V 1LW");
+    const postal = mkPostal();
+    expect(await isRealAddress(mkAddr("25 Wilton Road London"), postal)).toBe(true);
+    expect(postal.value).toBe("SW1V 1LW");
+  });
+
+  it("false for empty input, without geocode", async () => {
+    const fetchSpy = vi.fn();
+    vi.stubGlobal("fetch", fetchSpy);
+    expect(await isRealAddress(mkAddr("   "), mkPostal())).toBe(false);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
 });
 
 describe("extractPostal", () => {

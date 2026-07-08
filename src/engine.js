@@ -15,8 +15,15 @@ function markInvalid(el, on) {
   else el.removeAttribute("data-invalid");
 }
 
-export function validateStartInputs(inpAddress, inpRooms) {
-  const okA = isFilled(inpAddress),
+// Real address = a dropdown pick (dataset.placeSelected) or a resolved postcode; never bare text.
+export function isResolvedAddress(inpAddress, inpPostcode) {
+  if (!isFilled(inpAddress)) return false;
+  if (inpAddress.dataset && inpAddress.dataset.placeSelected === "1") return true;
+  return isFilled(inpPostcode);
+}
+
+export function validateStartInputs(inpAddress, inpRooms, inpPostcode) {
+  const okA = isResolvedAddress(inpAddress, inpPostcode),
     okR = isFilled(inpRooms);
   markInvalid(inpAddress, !okA);
   markInvalid(inpRooms, !okR);
@@ -65,6 +72,18 @@ export function progressWidth(step, count) {
   return `${((step + 1) / count) * 100}%`;
 }
 
+// True when the URL carries a full prefill (address + postal-code + beds), i.e. the
+// user arrived from another page's estimate form. prelead.js fills the inputs and
+// auto-advances; the engine uses this to start past the address step (no flash).
+export function hasStartPrefill(search) {
+  if (search == null) {
+    if (typeof location === "undefined") return false;
+    search = location.search;
+  }
+  const p = new URLSearchParams(search);
+  return !!(p.get("address") && p.get("postal-code") && p.get("beds"));
+}
+
 export function initStepper(doc = document) {
   const $ = (sel, root = doc) => root.querySelector(sel);
   const setActive = (el, on) => el && el.classList.toggle("is-active", on);
@@ -111,18 +130,31 @@ export function initStepper(doc = document) {
     else setStep(Number(key));
   }
 
-  // Initial state: step 0.
-  setStep(0);
+  // Initial state. If arriving with a completed address prefilled from another page's
+  // form, start past the address step so it never flashes before the auto-advance.
+  setStep(hasStartPrefill() && addressIdx >= 0 ? addressIdx + 1 : 0);
+  // Reveal the funnel now the correct step is positioned. Pairs with the page's
+  // prefill visibility guard (html.est-prefill [start-frame]{visibility:hidden}).
+  if (doc.documentElement) doc.documentElement.classList.add("est-ready");
 
-  // address step -> next step (validate address + beds)
+  // address step -> next step (validate a real address + beds)
   const addressStep = steps[addressIdx];
   if (addressStep) {
     const btnStart = addressStep.querySelector("[start-start-button]");
     const inpAddress = $('[data-input-id="address-search"]');
     const inpRooms = $("[data-rooms-input]");
+    const inpPostcode = $('[data-input-id="postal-code-result"]');
     if (btnStart) {
-      btnStart.addEventListener("click", () => {
-        if (validateStartInputs(inpAddress, inpRooms)) setStep(addressIdx + 1);
+      btnStart.addEventListener("click", async () => {
+        // Let the autocomplete module resolve/fill the postcode (on-demand geocode)
+        // before the sync gate, so a typed-but-valid address isn't wrongly blocked.
+        if (
+          typeof window !== "undefined" &&
+          typeof window.staymoIsRealAddress === "function"
+        ) {
+          await window.staymoIsRealAddress(inpAddress, inpPostcode);
+        }
+        if (validateStartInputs(inpAddress, inpRooms, inpPostcode)) setStep(addressIdx + 1);
       });
     }
   }
