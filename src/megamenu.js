@@ -1,4 +1,4 @@
-// Staymo mega-menu controller. Scoped to .mm; hooks: data-open / data-tab / data-acc. Load as <script type="module">.
+// Staymo mega-menu controller. Scoped to .mm; hooks: data-open / data-tab / data-acc / data-expand. Load as <script type="module">.
 (function(){
   var mm = document.querySelector('.mm');
   if(!mm) return;
@@ -7,7 +7,10 @@
   var mqMobile = window.matchMedia('(max-width: 47.9375em)');
 
   function setCurrent(name){
-    panels.forEach(function(p){ p.classList.toggle('is-current', p.dataset.panel === name); });
+    panels.forEach(function(p){
+      p.classList.toggle('is-current', p.dataset.panel === name);
+      p.classList.remove('is-expanded'); // a panel always (re)opens in its collapsed state
+    });
     mm.dataset.current = name || '';
     var act = parentOf[name] || name;
     mm.querySelectorAll('.mm__trigger').forEach(function(t){
@@ -40,6 +43,15 @@
     l.addEventListener('click', function(e){
       e.preventDefault();
       openSurface(); setCurrent(l.dataset.tab);
+    });
+  });
+
+  // in-panel expander: [data-expand] toggles is-expanded on its own panel (e.g. Talk → reveal the steps inline)
+  mm.querySelectorAll('[data-expand]').forEach(function(b){
+    b.addEventListener('click', function(e){
+      e.preventDefault();
+      var panel = b.closest('.mm-panel');
+      if(panel) panel.classList.toggle('is-expanded');
     });
   });
 
