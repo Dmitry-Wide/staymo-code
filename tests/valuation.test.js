@@ -97,7 +97,9 @@ describe("applyOutputs", () => {
     expect(document.querySelector('[data-output="delta-annual"]').textContent).toBe("+£21,400");
     expect(document.querySelector('[data-output="monthly-value"]').textContent).toBe("£3,000");
     expect(document.querySelector('[data-output="nightly-value"]').textContent).toBe("£114");
-    expect(document.querySelector('[form_data="estimation"]').value).toBe("£1000 - £5000");
+    // Thousands separators are deliberate (d10831c): the fallback range matches the
+    // format the API returns in `estimate`, e.g. "£8,400 - £13,650".
+    expect(document.querySelector('[form_data="estimation"]').value).toBe("£1,000 - £5,000");
     expect(document.querySelector('[data-process="property_bedrooms"]').value).toBe("2");
   });
 
