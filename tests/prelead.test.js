@@ -74,6 +74,79 @@ describe("prefillFromURL", () => {
   });
 });
 
+describe("prefillFromURL on the tile-based funnel", () => {
+  // The live /start-hosting form has no [data-input-id="beds-count"]: bedrooms are
+  // picked with [data-room] tiles backed by a hidden [data-rooms-input].
+  function tileFormFixture() {
+    document.body.innerHTML = `
+      <form data-form-type="start-host">
+        <input data-input-id="address-search">
+        <input data-input-id="postal-code-result">
+        <div data-rooms>
+          <div data-room="0">Studio</div>
+          <div data-room="1">1</div>
+          <div data-room="2" class="is-bed-selected">2</div>
+          <div data-room="3">3</div>
+          <div data-room="4">4 +</div>
+          <input type="hidden" data-rooms-input value="2">
+        </div>
+      </form>
+      <button start-start-button></button>`;
+  }
+
+  it("selects the tile named by the URL and writes the hidden input", () => {
+    vi.useFakeTimers();
+    tileFormFixture();
+    expect(prefillFromURL(document, "?address=a&postal-code=p&beds=3")).toBe(true);
+    expect(document.querySelector('[data-room="3"]').classList.contains("is-bed-selected")).toBe(true);
+    expect(document.querySelector('[data-room="2"]').classList.contains("is-bed-selected")).toBe(false);
+    expect(document.querySelector("[data-rooms-input]").value).toBe("3");
+    vi.runAllTimers();
+    vi.useRealTimers();
+  });
+
+  it("selects the Studio tile for beds=0", () => {
+    vi.useFakeTimers();
+    tileFormFixture();
+    prefillFromURL(document, "?address=a&postal-code=p&beds=0");
+    expect(document.querySelector('[data-room="0"]').classList.contains("is-bed-selected")).toBe(true);
+    expect(document.querySelector("[data-rooms-input]").value).toBe("0");
+    vi.runAllTimers();
+    vi.useRealTimers();
+  });
+
+  it("clamps a value above the last tile onto that tile", () => {
+    vi.useFakeTimers();
+    tileFormFixture();
+    prefillFromURL(document, "?address=a&postal-code=p&beds=9");
+    expect(document.querySelector('[data-room="4"]').classList.contains("is-bed-selected")).toBe(true);
+    expect(document.querySelector("[data-rooms-input]").value).toBe("4");
+    vi.runAllTimers();
+    vi.useRealTimers();
+  });
+
+  it("leaves the preselected tile alone when beds is not a number", () => {
+    vi.useFakeTimers();
+    tileFormFixture();
+    prefillFromURL(document, "?address=a&postal-code=p&beds=lots");
+    expect(document.querySelector('[data-room="2"]').classList.contains("is-bed-selected")).toBe(true);
+    expect(document.querySelector("[data-rooms-input]").value).toBe("2");
+    vi.runAllTimers();
+    vi.useRealTimers();
+  });
+
+  it("fires input/change on the hidden input so valuation.js sees the value", () => {
+    vi.useFakeTimers();
+    tileFormFixture();
+    let changed = false;
+    document.querySelector("[data-rooms-input]").addEventListener("change", () => (changed = true));
+    prefillFromURL(document, "?address=a&postal-code=p&beds=1");
+    expect(changed).toBe(true);
+    vi.runAllTimers();
+    vi.useRealTimers();
+  });
+});
+
 describe("injectReferrerFields", () => {
   it("adds hidden inputs to every form when cookies present", () => {
     document.cookie = "referrer-name=Jane";

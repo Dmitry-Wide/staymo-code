@@ -33,6 +33,35 @@ export function buildCookie(name, value, days) {
   return `${name}=${value || ""}; expires=${date.toUTCString()}; path=/; SameSite=Lax`;
 }
 
+// The tile funnel has no [data-input-id="beds-count"]: bedrooms are picked with
+// [data-room] tiles backed by a hidden [data-rooms-input]. Mark the tile the URL
+// asks for (clamped to the tiles on offer) and write the input, so beds.js,
+// engine.js and valuation.js all read the number the visitor chose upstream.
+export function applyBedsToTiles(doc, beds) {
+  const container = doc.querySelector("[data-rooms]");
+  const tiles = container ? [...container.querySelectorAll("[data-room]")] : [];
+  if (!tiles.length) return false;
+
+  const asked = Number(String(beds).trim());
+  if (!Number.isFinite(asked)) return false;
+
+  const values = tiles.map((t) => Number(t.getAttribute("data-room")));
+  const wanted = Math.min(Math.max(asked, Math.min(...values)), Math.max(...values));
+  // Last match wins: the funnel still ships a "Studio" tile sharing data-room="1" with "1".
+  const tile = tiles.filter((t) => Number(t.getAttribute("data-room")) === wanted).pop();
+  if (!tile) return false;
+
+  tiles.forEach((t) => t.classList.toggle("is-bed-selected", t === tile));
+
+  const input = container.querySelector("[data-rooms-input]");
+  if (input) {
+    input.value = String(wanted);
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+  }
+  return true;
+}
+
 // --- Form Initializer: URL → prefill + auto-click Start ---
 export function prefillFromURL(doc = document, search = currentSearch()) {
   const form = doc.querySelector('[data-form-type="start-host"]');
@@ -47,6 +76,7 @@ export function prefillFromURL(doc = document, search = currentSearch()) {
   if (addressInput) addressInput.value = address;
   if (postalCodeInput) postalCodeInput.value = postalCode;
   if (bedsInput) bedsInput.value = beds;
+  else applyBedsToTiles(form, beds);
   const startButton = doc.querySelector("[start-start-button]");
   if (startButton) setTimeout(() => startButton.click(), 100);
   return true;
