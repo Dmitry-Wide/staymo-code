@@ -271,6 +271,10 @@ export function initMegaMenu(mm, { doc = document, win = window, mq } = {}) {
     const target = doc.getElementById(url.hash.slice(1));
     if (!target || !target.scrollIntoView) return;
     e.preventDefault();
+    /* Webflow's handler is delegated on document and ignores defaultPrevented — left to run it
+       animates to the same target 99px higher and wins, because it finishes last. Stopping the
+       click here is scoped to in-page anchors inside the menu; every other link still bubbles. */
+    e.stopPropagation();
     if (win.history && win.history.pushState) win.history.pushState(null, "", url.hash);
     const reduce = win.matchMedia && win.matchMedia("(prefers-reduced-motion: reduce)").matches;
     target.scrollIntoView({ behavior: reduce ? "auto" : "smooth", block: "start" });

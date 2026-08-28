@@ -250,13 +250,20 @@ describe("mobile", () => {
     document.body.appendChild(section);
     const calls = [];
     section.scrollIntoView = (opts) => calls.push(opts);
+    // Webflow's own smooth scroll is delegated on document; the click must not reach it.
+    let reachedDocument = 0;
+    const spy = () => reachedDocument++;
+    document.addEventListener("click", spy);
     initMegaMenu(mm, { mq: media(true) });
     click(q(".mm__burger"));
+    reachedDocument = 0;
 
     const ev = new window.MouseEvent("click", { bubbles: true, cancelable: true });
     q('.mm-link[href="/#ready-to-get-started"]').dispatchEvent(ev);
+    document.removeEventListener("click", spy);
 
     expect(ev.defaultPrevented).toBe(true);
+    expect(reachedDocument).toBe(0);
     expect(calls).toHaveLength(1);
     expect(calls[0].block).toBe("start");
     expect(q(".mm__panels").classList.contains("is-open")).toBe(false);
@@ -264,13 +271,18 @@ describe("mobile", () => {
 
   it("leaves a link to another page to the browser", () => {
     const mm = fixture();
+    let reachedDocument = 0;
+    const spy = () => reachedDocument++;
     initMegaMenu(mm, { mq: media(true) });
     click(q(".mm__burger"));
+    document.addEventListener("click", spy);
 
     const ev = new window.MouseEvent("click", { bubbles: true, cancelable: true });
     q('.mm-link[href="/pricing"]').dispatchEvent(ev);
+    document.removeEventListener("click", spy);
 
     expect(ev.defaultPrevented).toBe(false);
+    expect(reachedDocument).toBe(1);
     expect(q(".mm__panels").classList.contains("is-open")).toBe(false);
   });
 
