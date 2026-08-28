@@ -247,6 +247,17 @@ export function initMegaMenu(mm, { doc = document, win = window, mq } = {}) {
       const alreadyOpen = panels.classList.contains("is-open") && panel && panel.classList.contains("is-current");
       if (alreadyOpen) closeAll(); else openPanel(wrapKey);
     }
+
+    /* Any working link closes the menu. A same-page anchor (How it works ->
+       /#ready-to-get-started from the homepage), a tel:/mailto: or a link to the
+       page you are already on never reloads, so nothing else would ever call
+       closeAll(): the drawer stays open over the section it just scrolled to and
+       the scroll lock is never released. This runs last because the burger and
+       the triggers are anchors too and their branches return above. Placeholder
+       rows (href="#") lead nowhere, so they leave the menu open. */
+    const link = e.target.closest("a[href]");
+    const href = link && link.getAttribute("href");
+    if (href && href !== "#") closeAll();
   }
 
   function onOutsideClick(e) {

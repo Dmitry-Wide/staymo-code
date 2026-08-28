@@ -7,9 +7,9 @@ function fixture() {
   document.body.innerHTML = `
     <div class="mm">
       <div class="mm__bar-nav">
-        <div class="mm__burger"><span class="mm__burger-line"></span></div>
-        <div class="mm__trigger-wrap" data-open="property-owners"><div class="mm__trigger">Owners</div></div>
-        <div class="mm__trigger-wrap" data-open="solutions"><div class="mm__trigger">Solutions</div></div>
+        <a href="#" class="mm__burger"><span class="mm__burger-line"></span></a>
+        <div class="mm__trigger-wrap" data-open="property-owners"><a href="#" class="mm__trigger">Owners</a></div>
+        <div class="mm__trigger-wrap" data-open="solutions"><a href="#" class="mm__trigger">Solutions</a></div>
       </div>
       <div class="mm__panels">
         <div class="mm-panel" data-panel="property-owners">
@@ -20,7 +20,10 @@ function fixture() {
         </div>
         <div class="mm-panel" data-panel="solutions">
           <div class="mm-panel__head">Solutions</div>
-          <div class="mm-panel__inner"><div class="mm-panel__content"></div></div>
+          <div class="mm-panel__inner"><div class="mm-panel__content">
+            <a class="mm-link" href="/#ready-to-get-started">How it works</a>
+            <a class="mm-link" href="#">Revenue reports</a>
+          </div></div>
         </div>
         <div class="mm-panel" data-panel="how-it-works">
           <div class="mm-panel__inner">
@@ -207,6 +210,33 @@ describe("mobile", () => {
     click(q(".mm-back"));
     expect(panel("how-it-works").classList.contains("is-current")).toBe(false);
     // the drawer underneath is untouched
+    expect(q(".mm__panels").classList.contains("is-open")).toBe(true);
+  });
+
+  // A same-page anchor scrolls without reloading, so the drawer has to get out of
+  // the way itself — otherwise it covers the section and keeps the page locked.
+  it("a link in the drawer closes it and releases the scroll lock", () => {
+    const mm = fixture();
+    initMegaMenu(mm, { mq: media(true) });
+    click(q(".mm__burger"));
+    click(panel("solutions").querySelector(".mm-panel__head"));
+    expect(document.documentElement.style.overflow).toBe("hidden");
+
+    click(q('.mm-link[href="/#ready-to-get-started"]'));
+
+    expect(q(".mm__panels").classList.contains("is-open")).toBe(false);
+    expect(q(".mm__burger").classList.contains("is-active")).toBe(false);
+    expect(document.documentElement.style.overflow).toBe("");
+  });
+
+  it("a placeholder row leaves the drawer open", () => {
+    const mm = fixture();
+    initMegaMenu(mm, { mq: media(true) });
+    click(q(".mm__burger"));
+    click(panel("solutions").querySelector(".mm-panel__head"));
+
+    click(q('.mm-link[href="#"]'));
+
     expect(q(".mm__panels").classList.contains("is-open")).toBe(true);
   });
 
