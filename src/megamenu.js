@@ -257,7 +257,23 @@ export function initMegaMenu(mm, { doc = document, win = window, mq } = {}) {
        rows (href="#") lead nowhere, so they leave the menu open. */
     const link = e.target.closest("a[href]");
     const href = link && link.getAttribute("href");
-    if (href && href !== "#") closeAll();
+    if (!href || href === "#") return;
+    closeAll();
+
+    /* Webflow's own smooth scroll animates to the target's raw offset and knows
+       nothing about our fixed bar, so an in-page anchor lands with its heading
+       hidden underneath it. Take the scroll ourselves: scrollIntoView honours
+       scroll-padding-top on <html>, which is where the bar's height is declared,
+       so the offset stays a CSS constant instead of a number buried in here. */
+    let url;
+    try { url = new URL(href, win.location.href); } catch { return; }
+    if (url.origin !== win.location.origin || url.pathname !== win.location.pathname || !url.hash) return;
+    const target = doc.getElementById(url.hash.slice(1));
+    if (!target || !target.scrollIntoView) return;
+    e.preventDefault();
+    if (win.history && win.history.pushState) win.history.pushState(null, "", url.hash);
+    const reduce = win.matchMedia && win.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    target.scrollIntoView({ behavior: reduce ? "auto" : "smooth", block: "start" });
   }
 
   function onOutsideClick(e) {

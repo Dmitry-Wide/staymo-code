@@ -22,6 +22,7 @@ function fixture() {
           <div class="mm-panel__head">Solutions</div>
           <div class="mm-panel__inner"><div class="mm-panel__content">
             <a class="mm-link" href="/#ready-to-get-started">How it works</a>
+            <a class="mm-link" href="/pricing">Pricing</a>
             <a class="mm-link" href="#">Revenue reports</a>
           </div></div>
         </div>
@@ -238,6 +239,39 @@ describe("mobile", () => {
     click(q('.mm-link[href="#"]'));
 
     expect(q(".mm__panels").classList.contains("is-open")).toBe(true);
+  });
+
+  // Webflow's smooth scroll ignores scroll-padding-top and parks the heading under
+  // the fixed bar, so the controller takes same-page anchors itself.
+  it("scrolls a same-page anchor itself instead of letting Webflow do it", () => {
+    const mm = fixture();
+    const section = document.createElement("section");
+    section.id = "ready-to-get-started";
+    document.body.appendChild(section);
+    const calls = [];
+    section.scrollIntoView = (opts) => calls.push(opts);
+    initMegaMenu(mm, { mq: media(true) });
+    click(q(".mm__burger"));
+
+    const ev = new window.MouseEvent("click", { bubbles: true, cancelable: true });
+    q('.mm-link[href="/#ready-to-get-started"]').dispatchEvent(ev);
+
+    expect(ev.defaultPrevented).toBe(true);
+    expect(calls).toHaveLength(1);
+    expect(calls[0].block).toBe("start");
+    expect(q(".mm__panels").classList.contains("is-open")).toBe(false);
+  });
+
+  it("leaves a link to another page to the browser", () => {
+    const mm = fixture();
+    initMegaMenu(mm, { mq: media(true) });
+    click(q(".mm__burger"));
+
+    const ev = new window.MouseEvent("click", { bubbles: true, cancelable: true });
+    q('.mm-link[href="/pricing"]').dispatchEvent(ev);
+
+    expect(ev.defaultPrevented).toBe(false);
+    expect(q(".mm__panels").classList.contains("is-open")).toBe(false);
   });
 
   it("an outside click does not close the drawer on mobile", () => {
