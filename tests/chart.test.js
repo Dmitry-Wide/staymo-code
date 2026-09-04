@@ -11,6 +11,12 @@ beforeEach(() => {
 });
 
 describe("generateMonths", () => {
+  it("starts on February by default, so July peaks mid-chart and January closes", () => {
+    const out = generateMonths(1000, 5000);
+    expect(out[0].short).toBe("Feb");
+    expect(out[5].short).toBe("Jul");
+    expect(out[11].short).toBe("Jan");
+  });
   it("returns 12 months starting at the given month", () => {
     const out = generateMonths(1000, 5000, 0); // start January
     expect(out).toHaveLength(12);
@@ -64,7 +70,7 @@ function fixture({ withTooltip = false } = {}) {
 describe("initEarningsChart", () => {
   it("sets bar heights, col data attrs and xlabels", () => {
     const root = fixture();
-    const ok = initEarningsChart(root, { min: 1000, max: 5000, nowMonth: 0 });
+    const ok = initEarningsChart(root, { min: 1000, max: 5000, startMonth: 0 });
     expect(ok).toBe(true);
     const cols = root.querySelectorAll('[data-chart="col"]');
     expect(cols[6].getAttribute("data-month")).toBe("July");
@@ -74,14 +80,14 @@ describe("initEarningsChart", () => {
   });
   it("positions and labels the long-term baseline from longTerm when provided", () => {
     const root = fixture();
-    initEarningsChart(root, { min: 1000, max: 5000, longTerm: "£2,400", nowMonth: 0 });
+    initEarningsChart(root, { min: 1000, max: 5000, longTerm: "£2,400", startMonth: 0 });
     const label = root.querySelector('[data-chart="baseline-label"]');
     expect(label.textContent).toBe("£ 2,400");
     expect(parseFloat(label.style.bottom)).toBeCloseTo((2400 / 6000) * 100, 1);
   });
   it("falls back to the min month for the baseline when longTerm is absent", () => {
     const root = fixture();
-    initEarningsChart(root, { min: 1000, max: 5000, nowMonth: 0 });
+    initEarningsChart(root, { min: 1000, max: 5000, startMonth: 0 });
     const label = root.querySelector('[data-chart="baseline-label"]');
     expect(label.textContent).toBe("£ 1,000");
     expect(parseFloat(label.style.bottom)).toBeCloseTo((1000 / 6000) * 100, 1);
@@ -93,7 +99,7 @@ describe("initEarningsChart", () => {
   });
   it("populates and shows the tooltip on bar hover", () => {
     const root = fixture({ withTooltip: true });
-    initEarningsChart(root, { min: 1000, max: 5000, nowMonth: 0 });
+    initEarningsChart(root, { min: 1000, max: 5000, startMonth: 0 });
     const tip = document.querySelector('[data-chart-tooltip="bar-chart"]');
     const julCol = root.querySelectorAll('[data-chart="col"]')[6];
     julCol.dispatchEvent(new Event("mouseenter"));

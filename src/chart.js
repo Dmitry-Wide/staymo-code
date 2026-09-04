@@ -4,6 +4,10 @@
 
 const RATE  = [72, 78, 83, 91, 93, 95, 98, 95, 88, 88, 84, 96]; // Jan..Dec seasonal weight
 const SHORT = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+// The 12 bars are a fixed seasonal illustration, not a forecast from today, so the axis starts
+// on a fixed month rather than the current one: February puts the July peak mid-chart and the
+// January trough last, which is the shape the axis was drawn for. Owner's call 2026-09-04.
+const START_MONTH = 1; // February
 const FULL  = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
 
 export function clean(n) {
@@ -18,10 +22,10 @@ export function fmt(n) {
   return Number(n).toLocaleString("en-GB");
 }
 
-export function generateMonths(min, max, nowMonth = new Date().getMonth()) {
+export function generateMonths(min, max, startMonth = START_MONTH) {
   const out = [];
   for (let i = 0; i < 12; i++) {
-    const m = (nowMonth + i) % 12;
+    const m = (startMonth + i) % 12;
     const value =
       SHORT[m] === "Jul" ? max
       : SHORT[m] === "Jan" ? min
@@ -31,7 +35,7 @@ export function generateMonths(min, max, nowMonth = new Date().getMonth()) {
   return out;
 }
 
-export function initEarningsChart(root, { min, max, longTerm, nowMonth } = {}) {
+export function initEarningsChart(root, { min, max, longTerm, startMonth } = {}) {
   if (!root) return false;
   const mn = clean(min), mx = clean(max);
   if (!mx) {
@@ -40,7 +44,7 @@ export function initEarningsChart(root, { min, max, longTerm, nowMonth } = {}) {
   }
   root.style.display = "block";
   const g = graphMax(mx);
-  const data = generateMonths(mn, mx, nowMonth);
+  const data = generateMonths(mn, mx, startMonth);
   const bars   = root.querySelectorAll('[data-chart="bar"]');
   const cols   = root.querySelectorAll('[data-chart="col"]');
   const xlabel = root.querySelectorAll('[data-chart="xlabel"]');
