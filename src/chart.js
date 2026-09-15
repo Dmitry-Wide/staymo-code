@@ -1,5 +1,6 @@
 /* Native earnings bar chart — no chart library.
-   JS binds to data-chart="…" hooks only; classes stay styling-only.
+   JS binds to data-chart="…" hooks only; classes stay styling-only. The one class it writes is
+   the is-active state on the highlighted bar — how that state looks is set in Webflow.
    Deterministic 12-bar illustration from min/max + a fixed seasonal weight. */
 
 const RATE  = [72, 78, 83, 91, 93, 95, 98, 95, 88, 88, 84, 96]; // Jan..Dec seasonal weight
@@ -35,14 +36,94 @@ export function generateMonths(min, max, startMonth = START_MONTH) {
   return out;
 }
 
-export function initEarningsChart(root, { min, max, longTerm, startMonth } = {}) {
+// The chart opens on its highest month — found, not assumed to sit in a fixed slot, so another
+// axis start or seasonal table still lands on the peak. Ties keep the first.
+export function peakIndex(data) {
+  let peak = 0;
+  for (let i = 1; i < data.length; i++) if (data[i].value > data[peak].value) peak = i;
+  return peak;
+}
+
+// Nightly figure behind a month: its income over the nights it is booked (30 × occupancy).
+export function perNight(value, rate) {
+  return rate > 0 ? Math.round(value / ((30 * rate) / 100)) : 0;
+}
+
+// Shift that brings [left, right] back inside [min, max]; 0 when it already fits. A box wider
+// than the bounds is pinned to the start edge.
+export function clampShift(left, right, min, max) {
+  if (left < min || right - left > max - min) return min - left;
+  if (right > max) return max - right;
+  return 0;
+}
+
+// root -> { peak }. Listeners are bound once per root; a re-init only moves the peak.
+const charts = new WeakMap();
+
+// Keep the tooltip inside the chart. CSS centres it on its bar; near an edge it is pulled back
+// in and the arrow moves the other way, so it still points at the bar. A hidden chart measures
+// 0 wide: it keeps its last shift, and the ResizeObserver pins again once it is shown.
+function pin(root) {
+  const tip = root.querySelector('[data-chart="tooltip"]');
+  if (!tip) return;
+  const box = root.getBoundingClientRect();
+  if (!box.width) return;
+  const arrow = tip.querySelector('[data-chart="tooltip-arrow"]');
+  tip.style.translate = "";
+  if (arrow) arrow.style.translate = "";
+  const t = tip.getBoundingClientRect();
+  const dx = clampShift(t.left, t.right, box.left, box.right);
+  if (!dx) return;
+  tip.style.translate = dx + "px";
+  if (arrow) arrow.style.translate = -dx + "px";
+}
+
+// Highlight bar i and move the tooltip into it. CSS parks the tooltip on the bar's top edge
+// (bottom: 100%), so it rides every height change — the intro grow included — with no maths here.
+function activate(root, i) {
+  const col = root.querySelectorAll('[data-chart="col"]')[i];
+  const bars = root.querySelectorAll('[data-chart="bar"]');
+  const bar = bars[i];
+  if (!col || !bar) return;
+  bars.forEach((b, j) => b.classList.toggle("is-active", j === i));
+  const tip = root.querySelector('[data-chart="tooltip"]');
+  if (!tip) return;
+  const v = +col.getAttribute("data-value");
+  const r = +col.getAttribute("data-rate");
+  const title = tip.querySelector('[data-chart="tooltip-title"]');
+  const sub = tip.querySelector('[data-chart="tooltip-sub"]');
+  if (title) title.textContent = col.getAttribute("data-month") + " · £" + fmt(v);
+  if (sub) sub.textContent = r + "% occupancy · £" + fmt(perNight(v, r)) + "/night";
+  if (tip.parentNode !== bar) bar.appendChild(tip);
+  pin(root);
+}
+
+// Mouse hover and a tap both move the highlight; the mouse leaving the chart puts it back on the
+// peak. Touch ignores hover (pointerover also fires when a scroll starts on the chart) and waits
+// for the tap. A lifted finger fires pointerleave before the click lands, so touch leaves are
+// ignored too — otherwise every tap would flash back to the peak first.
+function bind(root, chart) {
+  const pick = (e) => {
+    const col = e.target.closest && e.target.closest('[data-chart="col"]');
+    const i = col ? [...root.querySelectorAll('[data-chart="col"]')].indexOf(col) : -1;
+    if (i >= 0) activate(root, i);
+  };
+  root.addEventListener("pointerover", (e) => { if (e.pointerType !== "touch") pick(e); });
+  root.addEventListener("click", pick);
+  root.addEventListener("pointerleave", (e) => { if (e.pointerType !== "touch") activate(root, chart.peak); });
+  // Pin again whenever the chart's box changes: a resize, or being shown after it was hidden.
+  if (typeof ResizeObserver !== "undefined") new ResizeObserver(() => pin(root)).observe(root);
+}
+
+export function initEarningsChart(root, { min, max, startMonth } = {}) {
   if (!root) return false;
   const mn = clean(min), mx = clean(max);
   if (!mx) {
     root.style.display = "none";
     return false;
   }
-  root.style.display = "block";
+  // Clear rather than force "block": the display set in the Designer applies.
+  root.style.display = "";
   const g = graphMax(mx);
   const data = generateMonths(mn, mx, startMonth);
   const bars   = root.querySelectorAll('[data-chart="bar"]');
@@ -64,51 +145,22 @@ export function initEarningsChart(root, { min, max, longTerm, startMonth } = {})
     const val = Math.round((g * (n - j)) / n);
     yt[j].textContent = "£ " + (val >= 1000 ? val / 1000 + "k" : val);
   }
-  // "Long-term rental" baseline = backend ll_estimate (monthly); fall back to the
-  // short-term min month if the long-term figure is absent.
-  const lt = clean(longTerm) || mn;
-  const baseBottom = (lt / g) * 100 + "%";
-  const base = root.querySelector('[data-chart="baseline"]');
-  if (base) base.style.bottom = baseBottom;
-  const baseLabel = root.querySelector('[data-chart="baseline-label"]');
-  if (baseLabel) {
-    baseLabel.style.bottom = baseBottom;
-    baseLabel.textContent = "£ " + fmt(lt);
-  }
 
-  // Hover tooltip. NOTE: inner hooks are legacy class selectors
-  // (.result__chart__tooltip__*) — migrate to data-* when the result markup is
-  // rebuilt (Plan 2). Kept as-is here for a regression-safe extraction.
-  const tip = document.querySelector('[data-chart-tooltip="bar-chart"]');
-  if (tip) {
-    tip.style.position = "absolute";
-    tip.style.zIndex = "10000";
-    tip.style.pointerEvents = "none";
-    tip.style.display = "none";
+  let chart = charts.get(root);
+  if (!chart) {
+    chart = {};
+    charts.set(root, chart);
+    bind(root, chart);
   }
-  cols.forEach((col) => {
-    col.addEventListener("mouseenter", () => {
-      if (!tip) return;
-      const v = +col.getAttribute("data-value");
-      const r = col.getAttribute("data-rate");
-      const mo = col.getAttribute("data-month");
-      const mi = tip.querySelector(".result__chart__tooltip__month-income");
-      const od = tip.querySelector(".result__chart__tooltip__occupancy-daily");
-      if (mi) mi.textContent = mo + " income £" + fmt(v);
-      if (od) od.textContent = "Occupancy " + r + "% / Daily £" + fmt(Math.floor(v / 30));
-      tip.style.display = "block";
-    });
-    col.addEventListener("mousemove", (e) => {
-      if (tip) { tip.style.left = e.pageX + 12 + "px"; tip.style.top = e.pageY - 10 + "px"; }
-    });
-    col.addEventListener("mouseleave", () => { if (tip) tip.style.display = "none"; });
-  });
+  chart.peak = peakIndex(data);
+  activate(root, chart.peak);
   return true;
 }
 
-// Backward-compat shim: valuation code calls window.initChart(min, max, longTerm).
+// Backward-compat shim: valuation code calls window.initChart(min, max, longTerm). The long-term
+// baseline is gone from the chart, so the third argument is ignored.
 if (typeof window !== "undefined") {
-  window.initChart = function (min, max, longTerm) {
-    return initEarningsChart(document.querySelector("#chart-container"), { min, max, longTerm });
+  window.initChart = function (min, max) {
+    return initEarningsChart(document.querySelector("#chart-container"), { min, max });
   };
 }
