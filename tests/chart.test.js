@@ -6,6 +6,9 @@ import {
   peakIndex,
   perNight,
   clampShift,
+  breakdown,
+  initBreakdown,
+  initTabs,
   initEarningsChart,
 } from "../src/chart.js";
 
@@ -76,6 +79,385 @@ describe("helpers", () => {
     expect(clampShift(-20, 30, 0, 100)).toBe(20);
     expect(clampShift(70, 120, 0, 100)).toBe(-20);
     expect(clampShift(-10, 130, 0, 100)).toBe(10); // wider than the bounds: pinned to the start
+  });
+});
+
+// The owner's model: net = rental × 0.85 × (1 − 0.14 × 1.2). The table rounds to whole pounds and
+// still has to add up, so every test below checks the two things that can silently break — a column
+// that no longer reconciles, and a rounded figure drifting away from the model.
+const RATES = { platform: 0.15, staymo: 0.14, vat: 0.2 };
+const exactNet = (rental, r = RATES) =>
+  rental * (1 - r.platform) * (1 - r.staymo * (1 + r.vat));
+const rows = ["rental", "platform", "staymo", "vat", "net"];
+
+describe("breakdown", () => {
+  it("reconciles every month: rental minus the three deductions is the net", () => {
+    const out = breakdown(generateMonths(5880, 9555), RATES);
+    expect(out.months).toHaveLength(12);
+    out.months.forEach((m) => {
+      expect(m.rental - m.platform - m.staymo - m.vat).toBe(m.net);
+    });
+  });
+  it("keeps each month's net within £1 of the model", () => {
+    const out = breakdown(generateMonths(5880, 9555), RATES);
+    out.months.forEach((m) => {
+      expect(Math.abs(m.net - exactNet(m.rental))).toBeLessThanOrEqual(1);
+    });
+  });
+  it("stays within £1 of the model across the range of estimates we serve", () => {
+    for (let max = 1000; max <= 40000; max += 137) {
+      breakdown(generateMonths(Math.round(max * 0.6), max), RATES).months.forEach((m) => {
+        expect(Math.abs(m.net - exactNet(m.rental))).toBeLessThanOrEqual(1);
+      });
+    }
+  });
+  it("sums each row into its annual figure", () => {
+    const out = breakdown(generateMonths(5880, 9555), RATES);
+    rows.forEach((row) => {
+      const sum = out.months.reduce((a, m) => a + m[row], 0);
+      expect(out.annual[row]).toBe(sum);
+    });
+  });
+  it("reconciles the annual column too, so the table adds up in both directions", () => {
+    const a = breakdown(generateMonths(5880, 9555), RATES).annual;
+    expect(a.rental - a.platform - a.staymo - a.vat).toBe(a.net);
+  });
+  it("returns whole pounds in every cell", () => {
+    const out = breakdown(generateMonths(5880, 9555), RATES);
+    [...out.months, out.annual].forEach((m) => {
+      rows.forEach((row) => expect(Number.isInteger(m[row])).toBe(true));
+    });
+  });
+  it("holds the annual net to the model too, within the half-pound a month the rounding can cost", () => {
+    const out = breakdown(generateMonths(5880, 9555), RATES);
+    expect(Math.abs(out.annual.net - exactNet(out.annual.rental))).toBeLessThanOrEqual(6);
+  });
+  it("returns instead of spinning on a figure or a rate that is not finite", () => {
+    const months = generateMonths(5880, 9555);
+    expect(breakdown([{ short: "X", full: "X", value: NaN }], RATES).months).toHaveLength(1);
+    expect(breakdown([{ short: "X", full: "X", value: Infinity }], RATES).months).toHaveLength(1);
+    expect(breakdown(months, { platform: NaN, staymo: 0.14, vat: 0.2 }).months).toHaveLength(12);
+    expect(breakdown(months, { platform: 0.15, staymo: 0.14, vat: Infinity }).months).toHaveLength(12);
+  });
+  it("keeps to whole pounds even when the estimate arrives with pence", () => {
+    const row = breakdown([{ short: "X", full: "X", value: 4200.5 }], RATES).months[0];
+    rows.forEach((r) => expect(Number.isInteger(row[r])).toBe(true));
+    expect(row.rental - row.platform - row.staymo - row.vat).toBe(row.net);
+  });
+  it("reproduces the owner's model on the mockup's own figure: £89,835 of rent leaves £63,531", () => {
+    const out = breakdown([{ short: "Y", full: "Year", value: 89835 }], RATES);
+    expect(out.annual).toEqual({
+      rental: 89835,
+      platform: 13475,
+      staymo: 10691,
+      vat: 2138,
+      net: 63531,
+    });
+  });
+  it("carries the month names through, so the table can label its own columns", () => {
+    const out = breakdown(generateMonths(5880, 9555), RATES);
+    expect(out.months[0].short).toBe("Feb");
+    expect(out.months[5].full).toBe("July");
+    expect(out.months[11].short).toBe("Jan");
+  });
+  it("falls back to the site's rates when called without any", () => {
+    const months = generateMonths(5880, 9555);
+    expect(breakdown(months)).toEqual(breakdown(months, RATES));
+  });
+  it("still reconciles on rates the Designer might type instead", () => {
+    const out = breakdown(generateMonths(5880, 9555), { platform: 0.1, staymo: 0.12, vat: 0.2 });
+    out.months.forEach((m) => {
+      expect(m.rental - m.platform - m.staymo - m.vat).toBe(m.net);
+      expect(Math.abs(m.net - exactNet(m.rental, { platform: 0.1, staymo: 0.12, vat: 0.2 })))
+        .toBeLessThanOrEqual(1);
+    });
+  });
+});
+
+// The table the Designer builds in slice 3b: five rows of 12 months plus an Annual cell, with the
+// fee rates as data-* on the root so they can be changed without a release.
+function tableFixture({ rates = {}, rows: built = rows } = {}) {
+  const root = document.createElement("div");
+  root.setAttribute("data-breakdown", "table");
+  const attrs = { platform: "0.15", staymo: "0.14", vat: "0.2", ...rates };
+  for (const [name, value] of Object.entries(attrs)) {
+    if (value !== null) root.setAttribute("data-rate-" + name, value);
+  }
+  const cells = Array.from({ length: 12 }, () => `<span data-breakdown="cell"></span>`).join("");
+  root.innerHTML =
+    Array.from({ length: 12 }, () => `<span data-breakdown="xlabel"></span>`).join("") +
+    built.map((row) => `<div data-breakdown="${row}"><span data-breakdown="pct">—</span>${cells}` +
+      `<span data-breakdown="annual"></span></div>`).join("");
+  document.body.appendChild(root);
+  return root;
+}
+
+const cellsOf = (root, row) =>
+  [...root.querySelector(`[data-breakdown="${row}"]`).querySelectorAll('[data-breakdown="cell"]')]
+    .map((c) => c.textContent);
+const annualOf = (root, row) =>
+  root.querySelector(`[data-breakdown="${row}"]`).querySelector('[data-breakdown="annual"]').textContent;
+const money = (text) => Number(text.replace(/[£,]/g, ""));
+const pctOf = (root, row) =>
+  root.querySelector(`[data-breakdown="${row}"]`).querySelector('[data-breakdown="pct"]').textContent;
+
+describe("initBreakdown", () => {
+  it("fills every row across the same 12 months the bars use, Feb to Jan", () => {
+    const root = tableFixture();
+    expect(initBreakdown(root, { min: 5880, max: 9555 })).toBe(true);
+    const labels = [...root.querySelectorAll('[data-breakdown="xlabel"]')].map((l) => l.textContent);
+    expect(labels).toEqual(generateMonths(5880, 9555).map((m) => m.short));
+    expect(cellsOf(root, "rental")).toHaveLength(12);
+  });
+  it("writes pounds the way the mockup does: July's £9,555 of rent leaves £6,757", () => {
+    const root = tableFixture();
+    initBreakdown(root, { min: 5880, max: 9555 });
+    expect(cellsOf(root, "rental")[5]).toBe("£9,555");
+    expect(cellsOf(root, "net")[5]).toBe("£6,757");
+    expect(cellsOf(root, "rental")[11]).toBe("£5,880");
+  });
+  it("renders a table that adds up: every column reconciles as displayed", () => {
+    const root = tableFixture();
+    initBreakdown(root, { min: 5880, max: 9555 });
+    const byRow = Object.fromEntries(rows.map((row) => [row, cellsOf(root, row).map(money)]));
+    for (let i = 0; i < 12; i++) {
+      expect(byRow.rental[i] - byRow.platform[i] - byRow.staymo[i] - byRow.vat[i])
+        .toBe(byRow.net[i]);
+    }
+  });
+  it("renders an Annual that is the sum of its own row", () => {
+    const root = tableFixture();
+    initBreakdown(root, { min: 5880, max: 9555 });
+    rows.forEach((row) => {
+      expect(money(annualOf(root, row))).toBe(cellsOf(root, row).map(money).reduce((a, b) => a + b, 0));
+    });
+  });
+  it("takes the rates off the table root, so they are editable in the Designer", () => {
+    const root = tableFixture({ rates: { staymo: "0.12" } });
+    initBreakdown(root, { min: 5880, max: 9555 });
+    const expected = breakdown(generateMonths(5880, 9555), { platform: 0.15, staymo: 0.12, vat: 0.2 });
+    expect(cellsOf(root, "staymo").map(money)).toEqual(expected.months.map((m) => m.staymo));
+  });
+  it("falls back to the site's rates when an attribute is missing or not a rate", () => {
+    const root = tableFixture({ rates: { platform: null, staymo: "14%", vat: "-1" } });
+    initBreakdown(root, { min: 5880, max: 9555 });
+    const expected = breakdown(generateMonths(5880, 9555));
+    rows.forEach((row) => {
+      expect(cellsOf(root, row).map(money)).toEqual(expected.months.map((m) => m[row]));
+    });
+  });
+  it("writes each fee's rate into its own label, so a rate changed in the Designer cannot leave the label lying", () => {
+    const root = tableFixture();
+    initBreakdown(root, { min: 5880, max: 9555 });
+    expect([pctOf(root, "platform"), pctOf(root, "staymo"), pctOf(root, "vat")])
+      .toEqual(["15%", "14%", "20%"]);
+  });
+  it("follows the rate the Designer typed", () => {
+    const root = tableFixture({ rates: { staymo: "0.12" } });
+    initBreakdown(root, { min: 5880, max: 9555 });
+    expect(pctOf(root, "staymo")).toBe("12%");
+  });
+  it("spells a fractional rate without the floating-point dust", () => {
+    const root = tableFixture({ rates: { staymo: "0.125" } });
+    initBreakdown(root, { min: 5880, max: 9555 });
+    expect(pctOf(root, "staymo")).toBe("12.5%");
+  });
+  it("labels the fallback rate, not the unusable attribute, so label and figures agree", () => {
+    const root = tableFixture({ rates: { staymo: "12" } });
+    initBreakdown(root, { min: 5880, max: 9555 });
+    expect(pctOf(root, "staymo")).toBe("14%");
+  });
+  it("leaves the rows that carry no rate — rental and net — as the Designer wrote them", () => {
+    const root = tableFixture();
+    initBreakdown(root, { min: 5880, max: 9555 });
+    expect([pctOf(root, "rental"), pctOf(root, "net")]).toEqual(["—", "—"]);
+  });
+  it("hides the table and reports false when there is no estimate to break down", () => {
+    const root = tableFixture();
+    expect(initBreakdown(root, { min: 0, max: 0 })).toBe(false);
+    expect(root.style.display).toBe("none");
+  });
+  it("treats an estimate that is not a finite number as no estimate at all", () => {
+    const root = tableFixture();
+    expect(initBreakdown(root, { min: 0, max: "Infinity" })).toBe(false);
+    expect(root.style.display).toBe("none");
+    expect(cellsOf(root, "rental")[5]).toBe("");
+  });
+  it("clears display instead of forcing block, so the Designer's display applies", () => {
+    const root = tableFixture();
+    initBreakdown(root, { min: 0, max: 0 });
+    initBreakdown(root, { min: 5880, max: 9555 });
+    expect(root.style.display).toBe("");
+  });
+  it("overwrites on a second init rather than leaving the first estimate behind", () => {
+    const root = tableFixture();
+    initBreakdown(root, { min: 5880, max: 9555 });
+    initBreakdown(root, { min: 8000, max: 12400 });
+    expect(cellsOf(root, "rental")[5]).toBe("£12,400");
+    expect(cellsOf(root, "rental")).toHaveLength(12);
+  });
+  it("skips a row the Designer has not built yet instead of throwing", () => {
+    const root = tableFixture({ rows: ["rental", "net"] });
+    expect(initBreakdown(root, { min: 5880, max: 9555 })).toBe(true);
+    expect(cellsOf(root, "net")[5]).toBe("£6,757");
+  });
+  it("reports false when the page has no breakdown table at all", () => {
+    expect(initBreakdown(null, { min: 5880, max: 9555 })).toBe(false);
+  });
+});
+
+// The card header's segmented control from the mockup: two segments over two panels, each panel
+// carrying its own heading. Which one opens is the markup's call, so the Designer keeps the default.
+function tabsFixture({ active = "chart", panels = ["chart", "breakdown"] } = {}) {
+  const root = document.createElement("div");
+  root.setAttribute("data-tabs", "estimate");
+  const on = (name) => (name === active ? ' class="is-active"' : "");
+  root.innerHTML =
+    `<div data-tablist>` +
+      `<a href="#" data-tab="chart"${on("chart")}>Income overview</a>` +
+      `<a href="#" data-tab="breakdown"${on("breakdown")}>Detailed breakdown</a>` +
+    `</div>` +
+    panels.map((p) => `<div data-tabpanel="${p}"${on(p)}>${p} panel</div>`).join("");
+  document.body.appendChild(root);
+  return root;
+}
+
+const tabsOf = (root) => [...root.querySelectorAll("[data-tab]")];
+const panelOf = (root, name) => root.querySelector(`[data-tabpanel="${name}"]`);
+const selected = (root) =>
+  tabsOf(root).filter((t) => t.getAttribute("aria-selected") === "true").map((t) => t.getAttribute("data-tab"));
+const shown = (root) =>
+  [...root.querySelectorAll("[data-tabpanel]")].filter((p) => p.classList.contains("is-active"))
+    .map((p) => p.getAttribute("data-tabpanel"));
+const clickOn = (el) => {
+  const e = new MouseEvent("click", { bubbles: true, cancelable: true });
+  el.dispatchEvent(e);
+  return e;
+};
+const key = (el, k) => el.dispatchEvent(new KeyboardEvent("keydown", { key: k, bubbles: true, cancelable: true }));
+
+describe("initTabs", () => {
+  it("states the markup's open tab for assistive tech instead of overriding it", () => {
+    const root = tabsFixture({ active: "breakdown" });
+    expect(initTabs(root)).toBe(true);
+    expect(root.querySelector("[data-tablist]").getAttribute("role")).toBe("tablist");
+    expect(tabsOf(root).map((t) => t.getAttribute("role"))).toEqual(["tab", "tab"]);
+    expect(panelOf(root, "chart").getAttribute("role")).toBe("tabpanel");
+    expect(selected(root)).toEqual(["breakdown"]);
+    expect(shown(root)).toEqual(["breakdown"]);
+  });
+  it("opens on the first tab when the markup marks none", () => {
+    const root = tabsFixture({ active: "none" });
+    initTabs(root);
+    expect(selected(root)).toEqual(["chart"]);
+    expect(shown(root)).toEqual(["chart"]);
+  });
+  it("swaps panel and segment together on a click, leaving exactly one of each open", () => {
+    const root = tabsFixture();
+    initTabs(root);
+    clickOn(tabsOf(root)[1]);
+    expect(selected(root)).toEqual(["breakdown"]);
+    expect(shown(root)).toEqual(["breakdown"]);
+    expect(tabsOf(root)[1].classList.contains("is-active")).toBe(true);
+    expect(tabsOf(root)[0].classList.contains("is-active")).toBe(false);
+  });
+  it("swallows the click so a segment built as a link cannot jump the page", () => {
+    const root = tabsFixture();
+    initTabs(root);
+    expect(clickOn(tabsOf(root)[1]).defaultPrevented).toBe(true);
+  });
+  it("keeps only the open tab in the tab order, as a segmented control should", () => {
+    const root = tabsFixture();
+    initTabs(root);
+    expect(tabsOf(root).map((t) => t.getAttribute("tabindex"))).toEqual(["0", "-1"]);
+    clickOn(tabsOf(root)[1]);
+    expect(tabsOf(root).map((t) => t.getAttribute("tabindex"))).toEqual(["-1", "0"]);
+  });
+  it("moves the selection with the arrow keys and wraps around the ends", () => {
+    const root = tabsFixture();
+    initTabs(root);
+    const [chart, bd] = tabsOf(root);
+    chart.focus();
+    key(chart, "ArrowRight");
+    expect(selected(root)).toEqual(["breakdown"]);
+    expect(document.activeElement).toBe(bd);
+    key(bd, "ArrowRight");
+    expect(selected(root)).toEqual(["chart"]);
+    expect(document.activeElement).toBe(chart);
+    key(chart, "ArrowLeft");
+    expect(selected(root)).toEqual(["breakdown"]);
+  });
+  it("leaves other keys to the browser", () => {
+    const root = tabsFixture();
+    initTabs(root);
+    expect(key(tabsOf(root)[0], "Tab")).toBe(true);
+    expect(selected(root)).toEqual(["chart"]);
+  });
+  it("binds no second set of listeners on re-init and keeps the tab the visitor chose", () => {
+    const root = tabsFixture();
+    const onRoot = vi.spyOn(root, "addEventListener");
+    initTabs(root);
+    const bound = onRoot.mock.calls.length;
+    clickOn(tabsOf(root)[1]);
+    initTabs(root);
+    expect(onRoot.mock.calls.length).toBe(bound);
+    expect(selected(root)).toEqual(["breakdown"]);
+    expect(shown(root)).toEqual(["breakdown"]);
+  });
+  it("opens the first segment that has a panel when the markup's chosen one is missing", () => {
+    const root = tabsFixture({ active: "breakdown", panels: ["chart"] });
+    expect(initTabs(root)).toBe(true);
+    expect(selected(root)).toEqual(["chart"]);
+    expect(shown(root)).toEqual(["chart"]);
+  });
+  it("refuses a switcher with no panels at all rather than leaving a tablist of unmarked segments", () => {
+    const root = tabsFixture({ panels: [] });
+    expect(initTabs(root)).toBe(false);
+    expect(root.querySelector("[data-tablist]").getAttribute("role")).toBe(null);
+    expect(tabsOf(root).map((t) => t.getAttribute("role"))).toEqual([null, null]);
+  });
+  it("points each segment at the panel it opens, and names that panel by its segment", () => {
+    const root = tabsFixture();
+    initTabs(root);
+    const chart = tabsOf(root)[0];
+    const panel = panelOf(root, "chart");
+    expect(panel.id).toBeTruthy();
+    expect(chart.id).toBeTruthy();
+    expect(chart.getAttribute("aria-controls")).toBe(panel.id);
+    expect(panel.getAttribute("aria-labelledby")).toBe(chart.id);
+  });
+  it("keeps the ids the Designer set instead of minting over them", () => {
+    const root = tabsFixture();
+    panelOf(root, "chart").id = "given-panel";
+    tabsOf(root)[0].id = "given-tab";
+    initTabs(root);
+    expect(tabsOf(root)[0].getAttribute("aria-controls")).toBe("given-panel");
+    expect(panelOf(root, "chart").getAttribute("aria-labelledby")).toBe("given-tab");
+  });
+  it("puts the closed panel out of reach of assistive tech, whatever CSS the Designer gave it", () => {
+    const root = tabsFixture();
+    initTabs(root);
+    expect(panelOf(root, "breakdown").hasAttribute("inert")).toBe(true);
+    expect(panelOf(root, "chart").hasAttribute("inert")).toBe(false);
+    clickOn(tabsOf(root)[1]);
+    expect(panelOf(root, "chart").hasAttribute("inert")).toBe(true);
+    expect(panelOf(root, "breakdown").hasAttribute("inert")).toBe(false);
+  });
+  it("lets the keyboard step into the open panel and keeps the closed one out of the tab order", () => {
+    const root = tabsFixture();
+    initTabs(root);
+    expect(panelOf(root, "chart").getAttribute("tabindex")).toBe("0");
+    expect(panelOf(root, "breakdown").getAttribute("tabindex")).toBe("-1");
+  });
+  it("ignores a segment whose panel the Designer has not built yet", () => {
+    const root = tabsFixture({ panels: ["chart"] });
+    initTabs(root);
+    clickOn(tabsOf(root)[1]);
+    expect(shown(root)).toEqual(["chart"]);
+  });
+  it("reports false when the page has no switcher", () => {
+    expect(initTabs(null)).toBe(false);
+    expect(initTabs(document.createElement("div"))).toBe(false);
   });
 });
 
@@ -246,5 +628,27 @@ describe("initEarningsChart", () => {
     const root = fixture();
     expect(window.initChart(5880, 9555, "£3,000")).toBe(true);
     expect(activeIndex(root)).toBe(5);
+  });
+  it("window.initChart also fills the table and states the switcher, in the one call the funnel makes", () => {
+    fixture();
+    const table = tableFixture();
+    const tabs = tabsFixture();
+    expect(window.initChart(5880, 9555)).toBe(true);
+    expect(cellsOf(table, "rental")[5]).toBe("£9,555");
+    expect(selected(tabs)).toEqual(["chart"]);
+  });
+  it("gives the table the very figures the bars carry, month for month", () => {
+    const root = fixture();
+    const table = tableFixture();
+    window.initChart(5880, 9555);
+    const bars = all(root, "col").map((c) => Number(c.getAttribute("data-value")));
+    expect(cellsOf(table, "rental").map(money)).toEqual(bars);
+  });
+  it("labels the table's columns with the same months as the axis", () => {
+    const root = fixture();
+    const table = tableFixture();
+    window.initChart(5880, 9555);
+    expect([...table.querySelectorAll('[data-breakdown="xlabel"]')].map((l) => l.textContent))
+      .toEqual(all(root, "xlabel").map((l) => l.textContent));
   });
 });

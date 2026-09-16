@@ -49,6 +49,188 @@ export function perNight(value, rate) {
   return rate > 0 ? Math.round(value / ((30 * rate) / 100)) : 0;
 }
 
+// The fee model behind the breakdown table (owner's call 2026-09-15): the booking platform takes
+// its cut of the rent, Staymo's fee is charged on what is left, and VAT rides on that fee, so
+// net = rental × (1 − platform) × (1 − staymo × (1 + vat)).
+const FEES = { platform: 0.15, staymo: 0.14, vat: 0.2 };
+
+// The three deductions for one month, in whole pounds and summing to the rounded total deduction.
+// Rounding each on its own would let the net drift £1.50 from the model, so the residual between
+// their sum and that total goes to whichever deduction lost the most to rounding — which keeps
+// every net within 50p of the model while each deduction stays within £1 of its own exact figure.
+function deductions(rental, rates) {
+  const afterPlatform = rental * (1 - rates.platform);
+  const exact = [rental * rates.platform, afterPlatform * rates.staymo,
+                 afterPlatform * rates.staymo * rates.vat];
+  const cut = exact.map((n) => Math.round(n));
+  let drift = Math.round(exact[0] + exact[1] + exact[2]) - (cut[0] + cut[1] + cut[2]);
+  // A figure or a rate that is not a number leaves drift NaN, and `drift !== 0` is true of NaN for
+  // ever: the loop below would freeze the tab, synchronously, past any timeout. Hand the rounding
+  // back unadjusted instead and let the bad number show itself.
+  if (!Number.isFinite(drift)) return cut;
+  while (drift !== 0) {
+    const step = Math.sign(drift);
+    let give = 0;
+    for (let j = 1; j < cut.length; j++) {
+      if (step * (exact[j] - cut[j]) > step * (exact[give] - cut[give])) give = j;
+    }
+    cut[give] += step;
+    drift -= step;
+  }
+  return cut;
+}
+
+// Months -> the table's five rows. The net is what is left after subtracting the deductions and
+// Annual is the sum of a row, so a column and a row can never disagree with each other.
+export function breakdown(months, rates = FEES) {
+  const out = months.map((m) => {
+    // Whole pounds, in the one place both the rental and the net are built from: generateMonths
+    // floors ten of the twelve months but hands July and January the estimate as it came, and that
+    // estimate is the valuation API's, not ours. A figure that is no number at all draws £0.
+    const rental = Number.isFinite(m.value) ? Math.round(m.value) : 0;
+    const [platform, staymo, vat] = deductions(rental, rates);
+    return { short: m.short, full: m.full, rental, platform, staymo, vat,
+             net: rental - platform - staymo - vat };
+  });
+  const annual = { rental: 0, platform: 0, staymo: 0, vat: 0, net: 0 };
+  out.forEach((m) => { for (const row in annual) annual[row] += m[row]; });
+  return { months: out, annual };
+}
+
+// Every selector and attribute name below is spelled out in full: the contract generator reads the
+// literals out of this file, so a built-up name would leave the table out of the attribute contract
+// and put a placeholder in its place.
+const ROWS = {
+  rental: '[data-breakdown="rental"]',
+  platform: '[data-breakdown="platform"]',
+  staymo: '[data-breakdown="staymo"]',
+  vat: '[data-breakdown="vat"]',
+  net: '[data-breakdown="net"]',
+};
+
+// Rates ride on the table root so they can be changed in the Designer without a release. Anything
+// that is not a fraction — blank, "14%", a percentage typed whole — falls back to the site's rate.
+function feeRates(root) {
+  const pick = (raw, fallback) => {
+    const n = parseFloat(raw);
+    return n >= 0 && n < 1 ? n : fallback;
+  };
+  return {
+    platform: pick(root.getAttribute("data-rate-platform"), FEES.platform),
+    staymo: pick(root.getAttribute("data-rate-staymo"), FEES.staymo),
+    vat: pick(root.getAttribute("data-rate-vat"), FEES.vat),
+  };
+}
+
+// 0.15 -> "15%", 0.125 -> "12.5%". A row's label has to quote the rate its own figures were built
+// from, and 0.14 × 100 is 14.000000000000002, so the dust is trimmed instead of printed.
+const percent = (rate) => +(rate * 100).toFixed(2) + "%";
+
+// The table is drawn from the same generateMonths call as the bars, so its figures are the bars'
+// figures by construction rather than by a second model kept in step by hand.
+export function initBreakdown(root, { min, max, startMonth } = {}) {
+  if (!root) return false;
+  const mx = clean(max);
+  // clean() lets "Infinity" through as Infinity, and the funnel hands us the API's field untouched.
+  // A table of "£Infinity" is worse than no table, so an unusable estimate counts as none.
+  if (!mx || !Number.isFinite(mx)) {
+    root.style.display = "none";
+    return false;
+  }
+  root.style.display = "";
+  const data = generateMonths(clean(min), mx, startMonth);
+  const rates = feeRates(root);
+  const table = breakdown(data, rates);
+  const labels = root.querySelectorAll('[data-breakdown="xlabel"]');
+  data.forEach((m, i) => { if (labels[i]) labels[i].textContent = m.short; });
+  for (const row in ROWS) {
+    const line = root.querySelector(ROWS[row]);
+    if (!line) continue;
+    // The three fee rows quote their rate; rental and net have none and keep the Designer's text.
+    const pct = line.querySelector('[data-breakdown="pct"]');
+    if (pct && row in rates) pct.textContent = percent(rates[row]);
+    const cells = line.querySelectorAll('[data-breakdown="cell"]');
+    table.months.forEach((m, i) => { if (cells[i]) cells[i].textContent = "£" + fmt(m[row]); });
+    const annual = line.querySelector('[data-breakdown="annual"]');
+    if (annual) annual.textContent = "£" + fmt(table.annual[row]);
+  }
+  return true;
+}
+
+// root -> true. Like the chart, listeners are bound once per root; a re-init only restates.
+const tabbed = new WeakMap();
+
+// Panels are shown by class, so how a panel appears stays in Webflow. The closed one has to be
+// display:none there: anything else leaves it in the reading order with the open one.
+function showTab(root, name) {
+  const panels = [...root.querySelectorAll("[data-tabpanel]")];
+  const panelFor = (key) => panels.find((p) => p.getAttribute("data-tabpanel") === key);
+  // A segment whose panel nobody has built yet leaves the card as it is — and says so, so that init
+  // can fall back instead of reporting a switcher it never actually wired.
+  if (!panelFor(name)) return false;
+  root.querySelectorAll("[data-tab]").forEach((tab) => {
+    const open = tab.getAttribute("data-tab") === name;
+    tab.setAttribute("role", "tab");
+    tab.setAttribute("aria-selected", open ? "true" : "false");
+    // One stop for the whole control: the arrow keys move between the segments inside it.
+    tab.setAttribute("tabindex", open ? "0" : "-1");
+    tab.classList.toggle("is-active", open);
+    // Tie each segment to its own panel. Ids are minted only where the Designer left none.
+    const own = panelFor(tab.getAttribute("data-tab"));
+    if (!own) return;
+    if (!tab.id) tab.id = "sh-tab-" + tab.getAttribute("data-tab");
+    if (!own.id) own.id = "sh-panel-" + own.getAttribute("data-tabpanel");
+    tab.setAttribute("aria-controls", own.id);
+    own.setAttribute("aria-labelledby", tab.id);
+  });
+  panels.forEach((p) => {
+    const open = p.getAttribute("data-tabpanel") === name;
+    p.setAttribute("role", "tabpanel");
+    // Neither panel holds anything focusable of its own, so the open one takes a stop of its own.
+    p.setAttribute("tabindex", open ? "0" : "-1");
+    // inert rather than a note asking the Designer to remember display:none — the closed panel then
+    // leaves the tab order and the screen reader whatever CSS it ends up with.
+    p.toggleAttribute("inert", !open);
+    p.classList.toggle("is-active", open);
+  });
+  return true;
+}
+
+// The card's segmented control. Which tab opens is the markup's call — on a re-init that is also
+// the visitor's last choice, so a fresh estimate does not throw them back to the chart.
+export function initTabs(root) {
+  if (!root) return false;
+  const list = root.querySelector("[data-tablist]");
+  const tabs = [...root.querySelectorAll("[data-tab]")];
+  if (!list || !tabs.length) return false;
+  // The markup's own choice opens — on a re-init that is the visitor's last one — and if its panel
+  // is missing, the first segment that has one. A switcher with no panels is left unmarked rather
+  // than announced as a tablist whose segments are not tabs.
+  const order = [tabs.find((t) => t.classList.contains("is-active")), ...tabs].filter(Boolean);
+  if (!order.some((t) => showTab(root, t.getAttribute("data-tab")))) return false;
+  list.setAttribute("role", "tablist");
+  if (!tabbed.has(root)) {
+    tabbed.set(root, true);
+    root.addEventListener("click", (e) => {
+      const tab = e.target.closest && e.target.closest("[data-tab]");
+      if (!tab) return;
+      e.preventDefault(); // a segment built as a link would otherwise jump the page
+      showTab(root, tab.getAttribute("data-tab"));
+    });
+    root.addEventListener("keydown", (e) => {
+      const step = e.key === "ArrowRight" ? 1 : e.key === "ArrowLeft" ? -1 : 0;
+      const tab = step && e.target.closest && e.target.closest("[data-tab]");
+      if (!tab) return;
+      e.preventDefault();
+      const all = [...root.querySelectorAll("[data-tab]")];
+      const next = all[(all.indexOf(tab) + step + all.length) % all.length];
+      showTab(root, next.getAttribute("data-tab"));
+      next.focus();
+    });
+  }
+  return true;
+}
+
 // Shift that brings [left, right] back inside [min, max]; 0 when it already fits. A box wider
 // than the bounds is pinned to the start edge.
 export function clampShift(left, right, min, max) {
@@ -158,9 +340,15 @@ export function initEarningsChart(root, { min, max, startMonth } = {}) {
 }
 
 // Backward-compat shim: valuation code calls window.initChart(min, max, longTerm). The long-term
-// baseline is gone from the chart, so the third argument is ignored.
+// baseline is gone from the chart, so the third argument is ignored. The result screen's two other
+// pieces are drawn from the same call — the funnel makes no other — and the same min/max reach the
+// table, so its figures cannot drift from the bars. The return value stays the chart's: a page
+// without a table or a switcher is the estimator as it stood before this release.
 if (typeof window !== "undefined") {
   window.initChart = function (min, max) {
-    return initEarningsChart(document.querySelector("#chart-container"), { min, max });
+    const drawn = initEarningsChart(document.querySelector("#chart-container"), { min, max });
+    initBreakdown(document.querySelector('[data-breakdown="table"]'), { min, max });
+    initTabs(document.querySelector("[data-tabs]"));
+    return drawn;
   };
 }
