@@ -157,6 +157,52 @@ export function initBreakdown(root, { min, max, startMonth } = {}) {
   return true;
 }
 
+// The four figures over the chart (owner's call 2026-09-17), taken from the months the bars draw, so
+// no tile can disagree with a bar, the tooltip or the table. Occupancy is the mean of the months' rates
+// (every month counts 30 nights, as in perNight), and a night is the year's rent over the nights booked.
+export function stats(months, rates) {
+  const table = breakdown(months, rates);
+  const nights = months.reduce((sum, m) => sum + (30 * m.rate) / 100, 0);
+  return {
+    net: table.annual.net,
+    occupancy: Math.round(months.reduce((sum, m) => sum + m.rate, 0) / months.length),
+    nightly: nights > 0 ? Math.round(table.annual.rental / nights) : 0,
+    peak: months[peakIndex(months)].short,
+  };
+}
+
+// Spelled out in full for the contract generator, like ROWS.
+const STATS = {
+  net: '[data-stat="net"]',
+  occupancy: '[data-stat="occupancy"]',
+  nightly: '[data-stat="nightly"]',
+  peak: '[data-stat="peak"]',
+};
+
+// Rates are handed in by whoever owns them — today the table root — so the net tile and the table's
+// Annual net are one figure.
+export function initStats(root, { min, max, startMonth, rates } = {}) {
+  if (!root) return false;
+  const mx = clean(max);
+  if (!mx || !Number.isFinite(mx)) {
+    root.style.display = "none";
+    return false;
+  }
+  root.style.display = "";
+  const s = stats(generateMonths(clean(min), mx, startMonth), rates);
+  const text = {
+    net: "£" + fmt(s.net),
+    occupancy: s.occupancy + "%",
+    nightly: "£" + fmt(s.nightly) + "/night",
+    peak: s.peak,
+  };
+  for (const name in STATS) {
+    const el = root.querySelector(STATS[name]);
+    if (el) el.textContent = text[name];
+  }
+  return true;
+}
+
 // root -> true. Like the chart, listeners are bound once per root; a re-init only restates.
 const tabbed = new WeakMap();
 
@@ -340,14 +386,16 @@ export function initEarningsChart(root, { min, max, startMonth } = {}) {
 }
 
 // Backward-compat shim: valuation code calls window.initChart(min, max, longTerm). The long-term
-// baseline is gone from the chart, so the third argument is ignored. The result screen's two other
+// baseline is gone from the chart, so the third argument is ignored. The result screen's other
 // pieces are drawn from the same call — the funnel makes no other — and the same min/max reach the
-// table, so its figures cannot drift from the bars. The return value stays the chart's: a page
-// without a table or a switcher is the estimator as it stood before this release.
+// table and the tiles, so their figures cannot drift from the bars. The return value stays the
+// chart's: a page without a table, tiles or a switcher is the estimator as it stood before.
 if (typeof window !== "undefined") {
   window.initChart = function (min, max) {
     const drawn = initEarningsChart(document.querySelector("#chart-container"), { min, max });
-    initBreakdown(document.querySelector('[data-breakdown="table"]'), { min, max });
+    const table = document.querySelector('[data-breakdown="table"]');
+    initBreakdown(table, { min, max });
+    initStats(document.querySelector("[data-stats]"), { min, max, rates: table ? feeRates(table) : undefined });
     initTabs(document.querySelector("[data-tabs]"));
     return drawn;
   };

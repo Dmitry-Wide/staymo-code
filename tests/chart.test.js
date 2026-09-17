@@ -8,6 +8,8 @@ import {
   clampShift,
   breakdown,
   initBreakdown,
+  stats,
+  initStats,
   initTabs,
   initEarningsChart,
 } from "../src/chart.js";
@@ -303,6 +305,103 @@ describe("initBreakdown", () => {
   });
   it("reports false when the page has no breakdown table at all", () => {
     expect(initBreakdown(null, { min: 5880, max: 9555 })).toBe(false);
+  });
+});
+
+// The four tiles above the chart (mockup 6287:99573). Owner's call 2026-09-17: every figure comes from
+// the same 12 months as the bars, so the tiles, the tooltip and the table can never disagree.
+describe("stats", () => {
+  it("totals the net exactly as the table's Annual net does", () => {
+    const months = generateMonths(5880, 9555);
+    expect(stats(months).net).toBe(breakdown(months).annual.net);
+    expect(stats(months).net).toBe(72349);
+  });
+  it("follows the rates it is given, as the table does", () => {
+    const months = generateMonths(5880, 9555);
+    const rates = { platform: 0.15, staymo: 0.12, vat: 0.2 };
+    expect(stats(months, rates).net).toBe(breakdown(months, rates).annual.net);
+    expect(stats(months, rates).net).toBe(74436);
+  });
+  it("averages occupancy over the 12 months, rounded to a whole percent", () => {
+    expect(stats(generateMonths(5880, 9555)).occupancy).toBe(88); // 1061 / 12 = 88.42
+  });
+  it("prices a night as the year's rent over the nights booked, not as a mean of monthly prices", () => {
+    expect(stats(generateMonths(5880, 9555)).nightly).toBe(321); // 102,305 / 318.3
+    expect(stats(generateMonths(8000, 12400)).nightly).toBe(418); // 133,134 / 318.3
+    // Where the rules part: the mean of the monthly perNight figures gives 402, flooring gives 405.
+    expect(stats(generateMonths(4000, 12400)).nightly).toBe(406); // 129,134 / 318.3 = 405.70
+  });
+  it("names the month of the highest bar", () => {
+    expect(stats(generateMonths(5880, 9555)).peak).toBe("Jul");
+  });
+  it("reads peak and occupancy off the months it is handed, not off the seasonal table", () => {
+    const m = (short, rate, value) => ({ short, full: short, rate, value });
+    const s = stats([m("Mar", 99, 1000), m("Aug", 50, 3000), m("Sep", 72, 2000)]);
+    expect(s.peak).toBe("Aug");
+    expect(s.occupancy).toBe(74); // 221 / 3 = 73.67
+  });
+});
+
+// The tile row as the Designer builds it: a root carrying data-stats and a value node per figure.
+function statsFixture({ hooks = ["net", "occupancy", "nightly", "peak"] } = {}) {
+  const root = document.createElement("div");
+  root.setAttribute("data-stats", "estimate");
+  root.innerHTML = hooks.map((h) => `<div><div>label</div><div data-stat="${h}">—</div></div>`).join("");
+  document.body.appendChild(root);
+  return root;
+}
+
+const statOf = (root, name) => root.querySelector(`[data-stat="${name}"]`).textContent;
+
+describe("initStats", () => {
+  it("writes the four tiles the way the mockup spells them", () => {
+    const root = statsFixture();
+    expect(initStats(root, { min: 5880, max: 9555 })).toBe(true);
+    expect(["net", "occupancy", "nightly", "peak"].map((h) => statOf(root, h)))
+      .toEqual(["£72,349", "88%", "£321/night", "Jul"]);
+  });
+  it("uses the rates handed in, so the net tile matches a table whose rate was changed", () => {
+    const root = statsFixture();
+    initStats(root, { min: 5880, max: 9555, rates: { platform: 0.15, staymo: 0.12, vat: 0.2 } });
+    expect(statOf(root, "net")).toBe("£74,436");
+  });
+  it("hides the row and reports false when there is no estimate", () => {
+    const root = statsFixture();
+    expect(initStats(root, { min: 0, max: 0 })).toBe(false);
+    expect(root.style.display).toBe("none");
+    expect(statOf(root, "net")).toBe("—");
+  });
+  it("treats an estimate that is not a finite number as no estimate at all", () => {
+    const root = statsFixture();
+    expect(initStats(root, { min: 0, max: "Infinity" })).toBe(false);
+    expect(root.style.display).toBe("none");
+    expect(statOf(root, "nightly")).toBe("—");
+  });
+  it("clears display instead of forcing block, so the Designer's display applies", () => {
+    const root = statsFixture();
+    initStats(root, { min: 0, max: 0 });
+    initStats(root, { min: 5880, max: 9555 });
+    expect(root.style.display).toBe("");
+  });
+  it("overwrites on a second init rather than leaving the first estimate behind", () => {
+    const root = statsFixture();
+    initStats(root, { min: 5880, max: 9555 });
+    initStats(root, { min: 8000, max: 12400 });
+    expect(statOf(root, "net")).toBe("£94,154");
+    expect(statOf(root, "nightly")).toBe("£418/night");
+  });
+  it("groups thousands in the nightly figure, as in the net tile", () => {
+    const root = statsFixture();
+    initStats(root, { min: 30000, max: 45000 });
+    expect(statOf(root, "nightly")).toBe("£1,521/night");
+  });
+  it("skips a tile the Designer has not built instead of throwing", () => {
+    const root = statsFixture({ hooks: ["net", "peak"] });
+    expect(initStats(root, { min: 5880, max: 9555 })).toBe(true);
+    expect(statOf(root, "peak")).toBe("Jul");
+  });
+  it("reports false when the page has no tile row at all", () => {
+    expect(initStats(null, { min: 5880, max: 9555 })).toBe(false);
   });
 });
 
@@ -643,6 +742,36 @@ describe("initEarningsChart", () => {
     window.initChart(5880, 9555);
     const bars = all(root, "col").map((c) => Number(c.getAttribute("data-value")));
     expect(cellsOf(table, "rental").map(money)).toEqual(bars);
+  });
+  it("window.initChart fills the tile row too, in the same call", () => {
+    fixture();
+    const row = statsFixture();
+    window.initChart(5880, 9555);
+    expect(statOf(row, "net")).toBe("£72,349");
+    expect(statOf(row, "peak")).toBe("Jul");
+  });
+  it("gives the net tile the table's own rates, so it always equals the table's Annual net", () => {
+    fixture();
+    const table = tableFixture({ rates: { staymo: "0.12" } });
+    const row = statsFixture();
+    window.initChart(5880, 9555);
+    expect(statOf(row, "net")).toBe(annualOf(table, "net"));
+    expect(statOf(row, "net")).toBe("£74,436");
+  });
+  it("draws the table and the tiles from the API's own strings, one figure between them", () => {
+    fixture();
+    const table = tableFixture();
+    const row = statsFixture();
+    window.initChart("£5,880", "9,555");
+    expect(annualOf(table, "net")).toBe("£72,349");
+    expect(statOf(row, "net")).toBe("£72,349");
+    expect(statOf(row, "nightly")).toBe("£321/night");
+  });
+  it("names the same peak month the chart opens on", () => {
+    const root = fixture();
+    const row = statsFixture();
+    window.initChart(8000, 12400);
+    expect(statOf(row, "peak")).toBe(all(root, "col")[activeIndex(root)].getAttribute("data-month").slice(0, 3));
   });
   it("labels the table's columns with the same months as the axis", () => {
     const root = fixture();
