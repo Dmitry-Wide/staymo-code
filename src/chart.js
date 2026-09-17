@@ -11,8 +11,11 @@ const SHORT = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "O
 const START_MONTH = 1; // February
 const FULL  = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
 
+// The estimate is the valuation API's field, passed through untouched: anything that is not a finite
+// number — "Infinity", "1e400", "abc" — is no figure at all, so every init hides instead of drawing it.
 export function clean(n) {
-  return Number(String(n).replace(/[,£\s]/g, "")) || 0;
+  const v = Number(String(n).replace(/[,£\s]/g, ""));
+  return Number.isFinite(v) ? v || 0 : 0; // `|| 0` folds -0 into 0
 }
 
 export function graphMax(mx) {
@@ -131,9 +134,7 @@ const percent = (rate) => +(rate * 100).toFixed(2) + "%";
 export function initBreakdown(root, { min, max, startMonth } = {}) {
   if (!root) return false;
   const mx = clean(max);
-  // clean() lets "Infinity" through as Infinity, and the funnel hands us the API's field untouched.
-  // A table of "£Infinity" is worse than no table, so an unusable estimate counts as none.
-  if (!mx || !Number.isFinite(mx)) {
+  if (!mx) {
     root.style.display = "none";
     return false;
   }
@@ -184,7 +185,7 @@ const STATS = {
 export function initStats(root, { min, max, startMonth, rates } = {}) {
   if (!root) return false;
   const mx = clean(max);
-  if (!mx || !Number.isFinite(mx)) {
+  if (!mx) {
     root.style.display = "none";
     return false;
   }
@@ -359,7 +360,8 @@ export function initEarningsChart(root, { min, max, startMonth } = {}) {
   const xlabel = root.querySelectorAll('[data-chart="xlabel"]');
   for (let i = 0; i < 12; i++) {
     const d = data[i];
-    if (bars[i])   bars[i].style.height = Math.max(2, (d.value / g) * 100) + "%";
+    // Capped at the track: a minimum above the maximum would otherwise push January out of the card.
+    if (bars[i])   bars[i].style.height = Math.min(100, Math.max(2, (d.value / g) * 100)) + "%";
     if (xlabel[i]) xlabel[i].textContent = d.short;
     if (cols[i]) {
       cols[i].setAttribute("data-month", d.full);

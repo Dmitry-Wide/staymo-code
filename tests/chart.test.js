@@ -61,6 +61,15 @@ describe("helpers", () => {
   it("clean strips £ , and whitespace", () => {
     expect(clean("£4,200 ")).toBe(4200);
   });
+  it("clean reads a figure that is not a finite number as no figure", () => {
+    expect(clean("Infinity")).toBe(0);
+    expect(clean(-Infinity)).toBe(0);
+    expect(clean("1e400")).toBe(0);
+    expect(clean("abc")).toBe(0);
+  });
+  it("clean never hands back a negative zero, which fmt would print as '£-0'", () => {
+    expect(clean("-0")).toBe(0);
+  });
   it("graphMax rounds up to next 1000 above max*1.02", () => {
     expect(graphMax(5000)).toBe(6000);
   });
@@ -608,6 +617,24 @@ describe("initEarningsChart", () => {
     initEarningsChart(root, { min: 0, max: 0 });
     initEarningsChart(root, { min: 1000, max: 5000 });
     expect(root.style.display).toBe("");
+  });
+  it("hides a chart whose estimate is not a finite number instead of drawing '£ Infinityk'", () => {
+    const root = fixture();
+    initEarningsChart(root, { min: 5880, max: 9555 });
+    expect(initEarningsChart(root, { min: 5880, max: "Infinity" })).toBe(false);
+    expect(root.style.display).toBe("none");
+    expect(all(root, "ytick").map((t) => t.textContent)).not.toContain("£ Infinityk");
+  });
+  it("reads a minimum that is not a finite number as none, so no month draws £∞", () => {
+    const root = fixture();
+    initEarningsChart(root, { min: "Infinity", max: 9555 });
+    expect(one(root, "tooltip-title").textContent).toBe("July · £9,555");
+    expect(all(root, "col").every((c) => Number.isFinite(Number(c.getAttribute("data-value"))))).toBe(true);
+  });
+  it("never draws a bar past the top of the track, even when the minimum exceeds the maximum", () => {
+    const root = fixture();
+    initEarningsChart(root, { min: 12400, max: 8000 });
+    all(root, "bar").forEach((b) => expect(parseFloat(b.style.height)).toBeLessThanOrEqual(100));
   });
   it("opens on the peak month: exactly one active bar, with the tooltip inside it", () => {
     const root = fixture();
