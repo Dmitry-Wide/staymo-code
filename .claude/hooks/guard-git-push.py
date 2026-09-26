@@ -25,7 +25,7 @@ SHELLS = ("sh", "bash", "zsh")
 GIT_OPTS_WITH_ARG = ("-C", "-c", "--git-dir", "--work-tree", "--namespace", "--config-env",
                      "--attr-source")
 HEREDOC = re.compile(r"(?<!<)<<(-?)\s*(\\?)(['\"]?)([A-Za-z_][\w.-]*)\3")
-SHELL_READS_HEREDOC = re.compile(r"(?:^|[;&|(])\s*(?:\S*/)?(?:ba|z)?sh\b[^;&|<]*<<")
+SHELL_READS_HEREDOC = re.compile(r"(?:^|[;&|(])\s*(?:[^\s;&|(]*/)?(?:ba|z)?sh\b[^;&|<]*<<")
 
 FORCE = ("Blocked by .claude/hooks/guard-git-push.py: force-push is off for agents "
          "(--force, --force-with-lease, -f, +refspec, --mirror). main is never rewritten: "
@@ -60,7 +60,7 @@ def split_heredocs(cmd):
             continue
         out.append(line)
         opened, kept = k, len(out)
-        to_shell = SHELL_READS_HEREDOC.search(line) is not None
+        to_shell = "<<" in line and SHELL_READS_HEREDOC.search(line) is not None
         pending = [(d, bool(b or q), w, to_shell) for d, b, q, w in HEREDOC.findall(line)]
     if pending:  # never closed, so no heredoc at all (`"<<EOF"` inside a string): keep the lines
         out = out[:kept] + lines[opened + 1:]
@@ -298,6 +298,13 @@ def selftest():
         got = verdict(cmd) is not None
         print(("  ok    " if got == want else "  FAIL  ") + ("block " if want else "allow ") + repr(cmd))
         fail += got != want
+    # A long command must be decided well inside the 10 s hook timeout, or it fails open.
+    import time
+    t = time.time()
+    verdict("echo '" + "|" * 99_000 + "' && git push -f origin main")
+    dt = time.time() - t
+    print(("  ok    " if dt < 1 else "  FAIL  ") + f"99k-char command decided in {dt:.2f}s")
+    fail += dt >= 1
     # The stdin path: bad input must not crash the hook open.
     for raw, want in [('{"tool_input":{"command":123}}', False), ('{"tool_input":null}', False),
                       ("", False), ('{"tool_input":{"command":"git push -f', True)]:
