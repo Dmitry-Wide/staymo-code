@@ -1,0 +1,27 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash|Monitor",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "f=\"${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/guard-git-push.py\"; [ -f \"$f\" ] || f=\"$(git rev-parse --show-toplevel 2>/dev/null)/.claude/hooks/guard-git-push.py\"; [ -f \"$f\" ] || { echo 'guard-git-push.py not found: the force-push gate is off' >&2; exit 1; }; exec python3 \"$f\"",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "matcher": "compact",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "echo 'Context was just compacted: CLAUDE.md files of subfolders are unloaded until you Read a file in that folder again. Before the next edit, Read the CLAUDE.md of the folder you are working in, and re-read the plan section you are executing.'"
+          }
+        ]
+      }
+    ]
+  }
+}
