@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""PreToolUse hook: refuse a force-push, any deletion of main, merging a PR and editing or deleting a
-GitHub ruleset, from Claude's shell tools.
+"""PreToolUse hook: refuse a force-push, any deletion of main, merging a PR that touches the locks and
+editing or deleting a GitHub ruleset, from Claude's shell tools.
 
 core.hooksPath does not travel to cloud sessions and most repos have no .githooks/pre-push,
 so this is the gate that goes wherever .claude/ goes. It stops accidents, not a determined
@@ -9,8 +9,11 @@ push: aliases, scripts, eval, `... | sh`, `git -c remote.*.push=+...`, `git subm
 mutations slip past it.
 
 The rulesets on GitHub reject a direct push to main, but the agents act with Dmitry's own token:
-GitHub cannot tell them from him. So merging a PR (Dmitry merges) and loosening a ruleset are
-refused here; creating a ruleset is allowed.
+GitHub cannot tell them from him. So an agent merges its own PR only when the PR's files, read from
+GitHub right here, miss the locks: .github/workflows/, .claude/hooks/, .claude/settings.json. A PR
+that touches them, a PR whose files cannot be read in time, --auto (GitHub later merges a head the
+hook never saw) and --admin are Dmitry's. A push to the PR between this check and the merge is not
+seen. Loosening a ruleset is refused; creating one is allowed.
 
 Force-push is refused on every branch, not only main: the target of a bare `git push -f`
 cannot be read from the command line, and the studio rule is "no push --force" anyway.
@@ -24,14 +27,22 @@ import json
 import os
 import re
 import shlex
+import subprocess
 import sys
+import time
 
+# One budget for every `gh` call a command needs: past the hook's 10 s timeout it would fail open.
+DEADLINE = time.monotonic() + 7
+LOCKS = re.compile(r"(^|/)(\.github/workflows|\.claude/hooks)/|(^|/)\.claude/settings\.json$")
+MERGE_OPTS_WITH_ARG = ("-R", "--repo", "-A", "--author-email", "-b", "--body", "-F", "--body-file",
+                       "-t", "--subject", "--match-head-commit")
 PROTECTED = ("main", "heads/main", "refs/heads/main")
 FORCE_OPTS = ("--force", "--force-with-lease", "--force-if-includes", "--mirror")
 SHELLS = ("sh", "bash", "zsh")
 GIT_OPTS_WITH_ARG = ("-C", "-c", "--git-dir", "--work-tree", "--namespace", "--config-env",
                      "--attr-source")
 HEREDOC = re.compile(r"(?<!<)<<(-?)\s*(\\?)(['\"]?)([A-Za-z_][\w.-]*)\3")
+REDIRECT = re.compile(r"[<>]+&?|&>+")
 SHELL_READS_HEREDOC = re.compile(r"(?:^|[;&|(])\s*(?:[^\s;&|(]*/)?(?:ba|z)?sh\b[^;&|<]*<<")
 
 FORCE = ("Blocked by .claude/hooks/guard-git-push.py: force-push is off for agents "
@@ -42,8 +53,16 @@ DELETE = ("Blocked by .claude/hooks/guard-git-push.py: deleting main on the remo
           "for agents (--delete/-d main, :main, --prune). Ask Dmitry.")
 API = ("Blocked by .claude/hooks/guard-git-push.py: moving or deleting refs/heads/main "
        "through the GitHub API is off for agents. Ask Dmitry.")
-MERGE = ("Blocked by .claude/hooks/guard-git-push.py: merging a pull request is off for agents. "
-         "Dmitry merges: give him the PR link.")
+NAME_PR = ("Blocked by .claude/hooks/guard-git-push.py: name the pull request by number and repo, "
+           "`gh pr merge <N> -R <owner>/<repo>` or `gh api -X PUT repos/<owner>/<repo>/pulls/<N>/merge`: "
+           "the hook reads its files before an agent merges it.")
+LOCKED = ("Blocked by .claude/hooks/guard-git-push.py: {} touches {}. A PR that touches the checks and "
+          "locks (.github/workflows/, .claude/hooks/, .claude/settings.json) is Dmitry's to merge: give "
+          "him the PR link.")
+UNKNOWN = ("Blocked by .claude/hooks/guard-git-push.py: could not read the files of {} from GitHub ({}), "
+           "so it may touch the locks. Retry, or give Dmitry the PR link.")
+AUTO = ("Blocked by .claude/hooks/guard-git-push.py: --auto and --admin are off for agents. Wait for the "
+        "required check (`gh pr checks <N> -R <owner>/<repo> --watch`), then merge.")
 RULESET = ("Blocked by .claude/hooks/guard-git-push.py: editing or deleting a GitHub ruleset is off "
            "for agents (creating one is allowed). Ask Dmitry.")
 
@@ -126,9 +145,19 @@ def tokens(text):
 
 
 def segments(toks):
-    seg = []
+    """Simple commands. A redirection goes, with its target and the fd before it: it does not end
+    the command (`gh pr merge -R o/r 2>&1 16` runs PR 16, `git push origin x > log -f` forces).
+    ponytail: `16>log` (an fd) and `16 >log` (an argument) tokenize alike, so a PR number right
+    before a redirection is dropped too: a refusal, not a pass."""
+    seg, target = [], False
     for t in toks:
-        if t and all(c in ";&|()<>" for c in t):
+        if target:
+            target = False
+        elif REDIRECT.fullmatch(t):
+            if seg and seg[-1].isdigit():
+                seg.pop()
+            target = True
+        elif t and all(c in ";&|()<>" for c in t):
             yield seg
             seg = []
         else:
@@ -174,14 +203,78 @@ def check_push(args):
 def check_gh(args):
     # The REST route to the same moves: PATCH (force) or DELETE on git/refs/heads/main; PUT on
     # pulls/N/merge; PUT, PATCH or DELETE on a ruleset. `gh api` without a method is GET or POST.
-    methods = {m.group(2).upper() for a in args for m in [re.fullmatch(r"(-X|--method=?)?(DELETE|PATCH|PUT)", a, re.I)] if m}
+    methods = {m.group(2).upper() for a in args for m in [re.fullmatch(r"(-X=?|--method=?)?(DELETE|PATCH|PUT)", a, re.I)] if m}
     if any(a.endswith("git/refs/heads/main") for a in args) and methods & {"DELETE", "PATCH"}:
         return API
-    if methods and any(re.search(r"/pulls/\d+/merge$", a) for a in args):
-        return MERGE
+    if methods and any(re.search(r"pulls/[^/]+/merge\b", a) for a in args):
+        pr = next(filter(None, (re.search(r"(?:^|/)repos/([\w.-]+)/([\w.-]+)/pulls/(\d+)/merge$", a)
+                                for a in args)), None)
+        return check_files(*pr.groups()) if pr else NAME_PR
     if methods and any(re.search(r"(^|/)rulesets(/|$)", a) for a in args):
         return RULESET
     return None
+
+
+def check_pr(args):
+    """`gh pr ARGS`: cobra takes -R before the subcommand too (`gh pr -R o/r merge 5`)."""
+    k = 0
+    while k < len(args) and args[k].startswith("-"):
+        k += 2 if args[k] in ("-R", "--repo") else 1
+    return check_merge(args[:k] + args[k + 1:]) if args[k:k + 1] == ["merge"] else None
+
+
+def check_merge(args):
+    """`gh pr merge ARGS`: why not, or None for a PR named by number and -R whose files miss the locks.
+
+    gh takes the repo of the current folder and the PR of the current branch, but the hook sees the
+    text, not the folder (`cd ../x && gh pr merge 5`): so the PR is named in full. -R also keeps gh's
+    -d from deleting the local branch with `git branch -D`.
+    """
+    repo, picks, it = "", [], iter(args)
+    for a in it:
+        opt, eq, val = a.partition("=")
+        if a in ("-h", "--help"):
+            return None  # gh prints the help and merges nothing
+        if opt in ("--auto", "--admin"):
+            return AUTO
+        if opt in MERGE_OPTS_WITH_ARG:
+            val = val if eq else next(it, "")
+            repo = val if opt in ("-R", "--repo") else repo
+        elif not a.startswith("-"):
+            picks.append(a)
+    m = re.fullmatch(r"(?:github\.com/)?([\w.-]+)/([\w.-]+)", repo)
+    if not (m and picks and picks[0].isdigit()):
+        return NAME_PR
+    return check_files(m[1], m[2], picks[0])
+
+
+def check_files(owner, repo, number):
+    pr = f"{owner}/{repo}#{number}"
+    files, why = pr_files(owner, repo, number)
+    if why:
+        return UNKNOWN.format(pr, why)
+    hit = next((f for f in files if LOCKS.search(f)), None)
+    return LOCKED.format(pr, hit) if hit else None
+
+
+def pr_files(owner, repo, number):
+    """(every path the PR touches, both names of a rename, None) or (None, why GitHub did not say)."""
+    try:
+        run = subprocess.run(
+            ["gh", "api", "--paginate", f"repos/{owner}/{repo}/pulls/{number}/files?per_page=100",
+             "--jq", ".[] | [.filename, .previous_filename]"],
+            stdin=subprocess.DEVNULL, capture_output=True, text=True,
+            timeout=max(DEADLINE - time.monotonic(), 0.01))
+        if run.returncode:
+            return None, (run.stderr.strip() or f"gh exit {run.returncode}")[:200]
+        rows = [json.loads(line) for line in run.stdout.splitlines()]
+    except (OSError, ValueError, subprocess.TimeoutExpired) as e:
+        return None, type(e).__name__
+    if not all(isinstance(r, list) for r in rows):
+        return None, "unexpected gh output"
+    if len(rows) >= 3000:  # the REST API lists at most 3000 files and drops the rest silently
+        return None, "3000 files or more"
+    return [f for r in rows for f in r if isinstance(f, str)], None
 
 
 def shell_script(args):
@@ -209,8 +302,8 @@ def verdict(cmd):
             name = os.path.basename(t).lstrip("=").lower()  # zsh runs =git; APFS runs GIT
             if name == "git":
                 why = check_push(seg[i + 1:])
-            elif name == "gh" and seg[i + 1:i + 3] == ["pr", "merge"]:
-                why = MERGE
+            elif name == "gh" and seg[i + 1:i + 2] == ["pr"]:
+                why = check_pr(seg[i + 2:])
             elif name == "gh" and seg[i + 1:i + 2] == ["api"]:
                 why = check_gh(seg[i + 2:])
             elif name in SHELLS:
@@ -224,6 +317,13 @@ def verdict(cmd):
 
 
 def selftest():
+    global pr_files, DEADLINE
+    real_pr_files = pr_files  # no network in the checks below: a PR's files come from this table
+    fake = {"10": ["docs/a.md"], "11": ["docs/a.md", ".github/workflows/studio-kit.yml"],
+            "12": [".claude/hooks/guard-git-push.py"], "13": [".claude/settings.json"],
+            "14": ["docs/guard.py", ".claude/hooks/guard.py"],  # moved out of the hooks folder
+            "15": ["site/.claude/settings.json"]}
+    pr_files = lambda o, r, n: (fake[n], None) if (o, r) == ("o", "r") and n in fake else (None, "HTTP 404")
     blocked = [
         "git push --force origin main",
         "git push -f origin main",
@@ -281,14 +381,14 @@ def selftest():
         # the same move through the REST API
         "gh api -X DELETE repos/o/r/git/refs/heads/main",
         "gh api --method PATCH repos/o/r/git/refs/heads/main -F force=true",
-        # merging is Dmitry's; a ruleset is loosened only by hand
-        "gh pr merge 10 -R Dmitry-Wide/studio --merge",
-        "cd x && gh pr merge --auto --squash",
-        "gh api -X PUT repos/o/r/pulls/10/merge",
-        "gh api --method=PUT /repos/o/r/pulls/10/merge -f merge_method=merge",
+        # a ruleset is loosened only by hand
         "gh api -X PUT repos/o/r/rulesets/1 -f enforcement=disabled",
         "gh api -XDELETE repos/o/r/rulesets/1",
         "gh api --method PATCH repos/o/r/rulesets/7",
+        "gh api -X=DELETE repos/o/r/rulesets/1",
+        "gh api -X=DELETE repos/o/r/git/refs/heads/main",
+        # a redirection does not end the command: -f after it still forces
+        "git push origin main > log -f",
     ]
     allowed = [
         "git push origin main",
@@ -324,14 +424,79 @@ def selftest():
         "gh api repos/o/r/rulesets",
         "gh api -X POST repos/o/r/rulesets --input main.json",
         "gh api repos/o/r/rules/branches/main",
+        "gh help pr merge",
+        "gh pr create --title merge --body x",
+        "git push origin main > /tmp/push.log 2>&1",
     ]
     fail = 0
     for cmd, want in [(c, True) for c in blocked] + [(c, False) for c in allowed]:
         got = verdict(cmd) is not None
         print(("  ok    " if got == want else "  FAIL  ") + ("block " if want else "allow ") + repr(cmd))
         fail += got != want
+    # An agent merges a PR named in full whose files miss the locks; the reason must be the right one.
+    lock = lambda n, f: LOCKED.format(f"o/r#{n}", f)
+    merges = [
+        ("gh pr merge 10 -R o/r --merge", None),
+        ("gh pr merge 10 --repo github.com/o/r -m -t 'docs: 11' -b 'x -R y/z'", None),
+        ("gh pr merge 10 --repo=o/r -d 2>&1 | tail -3", None),
+        ("gh api -X PUT repos/o/r/pulls/10/merge -f merge_method=merge", None),
+        ("gh api --method=PUT /repos/o/r/pulls/10/merge", None),
+        ("gh pr merge --help", None),
+        ("gh pr merge 11 -R o/r --merge", lock(11, ".github/workflows/studio-kit.yml")),
+        ("gh pr merge 12 -R o/r", lock(12, ".claude/hooks/guard-git-push.py")),
+        ("gh pr merge -s 13 -R o/r", lock(13, ".claude/settings.json")),
+        ("gh pr merge 14 -R o/r", lock(14, ".claude/hooks/guard.py")),
+        ("gh pr merge 15 -R o/r", lock(15, "site/.claude/settings.json")),
+        ("gh api -X PUT repos/o/r/pulls/11/merge", lock(11, ".github/workflows/studio-kit.yml")),
+        ("gh pr merge 10 -R o/r && gh pr merge 12 -R o/r", lock(12, ".claude/hooks/guard-git-push.py")),
+        ("gh pr merge -R o/r --merge 2>&1 12", lock(12, ".claude/hooks/guard-git-push.py")),
+        ("gh pr merge -R o/r 2>/dev/null 12 --merge", lock(12, ".claude/hooks/guard-git-push.py")),
+        ("gh api -X=PUT repos/o/r/pulls/11/merge", lock(11, ".github/workflows/studio-kit.yml")),
+        ("gh pr -R o/r merge 12", lock(12, ".claude/hooks/guard-git-push.py")),
+        ("gh pr --repo=o/r merge 10 --merge", None),
+        ("gh pr -Ro/r merge 12", NAME_PR),
+        ("gh pr merge 10 -R Dmitry-Wide/studio --merge", UNKNOWN.format("Dmitry-Wide/studio#10", "HTTP 404")),
+        ("gh pr merge 10", NAME_PR),
+        ("cd ../x && gh pr merge 10 --merge", NAME_PR),
+        ("gh pr merge -R o/r", NAME_PR),
+        ("gh pr merge https://github.com/o/r/pull/10", NAME_PR),
+        ("gh pr merge 10 -R ghe.example.com/o/r", NAME_PR),
+        ("gh api -X PUT 'repos/{owner}/{repo}/pulls/10/merge'", NAME_PR),
+        ("cd x && gh pr merge --auto --squash", AUTO),
+        ("gh pr merge 10 -R o/r --auto", AUTO),
+        ("gh pr merge 10 -R o/r --admin", AUTO),
+    ]
+    for cmd, want in merges:
+        got = verdict(cmd)
+        print(("  ok    " if got == want else "  FAIL  ") + f"merge {cmd!r} -> {(got or 'allow')[:90]}")
+        fail += got != want
+    # The real lookup, with a fake gh alone on PATH: every way GitHub may not answer is a refusal.
+    pr_files, path = real_pr_files, os.environ.get("PATH", "")
+    args = "api --paginate repos/o/r/pulls/1/files?per_page=100 --jq .[] | [.filename, .previous_filename]"
+    import tempfile
+    with tempfile.TemporaryDirectory() as d:
+        gh, os.environ["PATH"] = os.path.join(d, "gh"), d
+        for body, want in [
+            (f'[ "$*" = "{args}" ] || exit 3\necho \'["docs/a.md",null]\'; echo \'["b.md",".claude/hooks/x.py"]\'',
+             (["docs/a.md", "b.md", ".claude/hooks/x.py"], None)),
+            ("echo 'HTTP 404: Not Found' >&2; exit 1", (None, "HTTP 404: Not Found")),
+            ("echo 'not json'", (None, "JSONDecodeError")),
+            ("echo '{\"a\": 1}'", (None, "unexpected gh output")),
+            ("i=0; while [ $i -lt 3000 ]; do echo '[\"f\",null]'; i=$((i+1)); done", (None, "3000 files or more")),
+            ("exec /bin/sleep 5", (None, "TimeoutExpired")),
+            (None, (None, "FileNotFoundError")),
+        ]:
+            if body is None:
+                os.remove(gh)
+            else:
+                open(gh, "w").write("#!/bin/sh\n" + body + "\n")
+                os.chmod(gh, 0o755)
+            DEADLINE = time.monotonic() + 1.5
+            got = pr_files("o", "r", "1")
+            print(("  ok    " if got == want else "  FAIL  ") + f"gh {(body or 'missing')[:40]!r} -> {got}")
+            fail += got != want
+    os.environ["PATH"] = path
     # A long command must be decided well inside the 10 s hook timeout, or it fails open.
-    import time
     t = time.time()
     verdict("echo '" + "|" * 99_000 + "' && git push -f origin main")
     dt = time.time() - t
@@ -356,8 +521,9 @@ def decide(raw):
         cmd = (json.loads(raw).get("tool_input") or {}).get("command") or ""
         return verdict(cmd if isinstance(cmd, str) else json.dumps(cmd))
     except Exception as e:  # noqa: BLE001 - a crashed hook fails open: refuse what looks like a push
-        if "push" in raw:
-            return f"guard-git-push.py could not read this call ({e!r}); refusing it: it mentions push."
+        if re.search(r"push|merge|rulesets", raw):
+            return (f"guard-git-push.py could not read this call ({e!r}); refusing it: it mentions "
+                    "push, merge or rulesets.")
         return None
 
 
