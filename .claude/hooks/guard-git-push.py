@@ -10,7 +10,8 @@ mutations slip past it.
 
 The rulesets on GitHub reject a direct push to main, but the agents act with Dmitry's own token:
 GitHub cannot tell them from him. So an agent merges its own PR only when the PR's files, read from
-GitHub right here, miss the locks: .github/workflows/, .claude/hooks/, .claude/settings.json. A PR
+GitHub right here, miss the locks: .github/workflows/, .claude/hooks/, .claude/settings.json and, in
+the kit, the check every copy's CI runs at the kit's main: action.yml, tools/studio-copy.py. A PR
 that touches them, a PR whose files cannot be read in time, --auto (GitHub later merges a head the
 hook never saw) and --admin are Dmitry's. A push to the PR between this check and the merge is not
 seen. Loosening a ruleset is refused; creating one is allowed.
@@ -33,7 +34,8 @@ import time
 
 # One budget for every `gh` call a command needs: past the hook's 10 s timeout it would fail open.
 DEADLINE = time.monotonic() + 7
-LOCKS = re.compile(r"(^|/)(\.github/workflows|\.claude/hooks)/|(^|/)\.claude/settings\.json$")
+LOCKS = re.compile(r"(^|/)(\.github/workflows|\.claude/hooks)/|(^|/)\.claude/settings\.json$"
+                   r"|^(action\.yml|tools/studio-copy\.py)$")  # the kit's check: every copy runs it at main
 MERGE_OPTS_WITH_ARG = ("-R", "--repo", "-A", "--author-email", "-b", "--body", "-F", "--body-file",
                        "-t", "--subject", "--match-head-commit")
 PROTECTED = ("main", "heads/main", "refs/heads/main")
@@ -57,8 +59,8 @@ NAME_PR = ("Blocked by .claude/hooks/guard-git-push.py: name the pull request by
            "`gh pr merge <N> -R <owner>/<repo>` or `gh api -X PUT repos/<owner>/<repo>/pulls/<N>/merge`: "
            "the hook reads its files before an agent merges it.")
 LOCKED = ("Blocked by .claude/hooks/guard-git-push.py: {} touches {}. A PR that touches the checks and "
-          "locks (.github/workflows/, .claude/hooks/, .claude/settings.json) is Dmitry's to merge: give "
-          "him the PR link.")
+          "locks (.github/workflows/, .claude/hooks/, .claude/settings.json; in the kit, action.yml and "
+          "tools/studio-copy.py) is Dmitry's to merge: give him the PR link.")
 UNKNOWN = ("Blocked by .claude/hooks/guard-git-push.py: could not read the files of {} from GitHub ({}), "
            "so it may touch the locks. Retry, or give Dmitry the PR link.")
 AUTO = ("Blocked by .claude/hooks/guard-git-push.py: --auto and --admin are off for agents. Wait for the "
@@ -322,7 +324,8 @@ def selftest():
     fake = {"10": ["docs/a.md"], "11": ["docs/a.md", ".github/workflows/studio-kit.yml"],
             "12": [".claude/hooks/guard-git-push.py"], "13": [".claude/settings.json"],
             "14": ["docs/guard.py", ".claude/hooks/guard.py"],  # moved out of the hooks folder
-            "15": ["site/.claude/settings.json"]}
+            "15": ["site/.claude/settings.json"], "16": ["action.yml"], "17": ["tools/studio-copy.py"],
+            "18": ["site/action.yml", "tools/studio-copy.py.md"]}  # the kit's check is locked at its own paths only
     pr_files = lambda o, r, n: (fake[n], None) if (o, r) == ("o", "r") and n in fake else (None, "HTTP 404")
     blocked = [
         "git push --force origin main",
@@ -447,6 +450,9 @@ def selftest():
         ("gh pr merge -s 13 -R o/r", lock(13, ".claude/settings.json")),
         ("gh pr merge 14 -R o/r", lock(14, ".claude/hooks/guard.py")),
         ("gh pr merge 15 -R o/r", lock(15, "site/.claude/settings.json")),
+        ("gh pr merge 16 -R o/r", lock(16, "action.yml")),
+        ("gh pr merge 17 -R o/r", lock(17, "tools/studio-copy.py")),
+        ("gh pr merge 18 -R o/r", None),
         ("gh api -X PUT repos/o/r/pulls/11/merge", lock(11, ".github/workflows/studio-kit.yml")),
         ("gh pr merge 10 -R o/r && gh pr merge 12 -R o/r", lock(12, ".claude/hooks/guard-git-push.py")),
         ("gh pr merge -R o/r --merge 2>&1 12", lock(12, ".claude/hooks/guard-git-push.py")),
