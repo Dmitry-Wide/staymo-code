@@ -42,6 +42,7 @@ SHELLS = ("sh", "bash", "zsh")
 GIT_OPTS_WITH_ARG = ("-C", "-c", "--git-dir", "--work-tree", "--namespace", "--config-env",
                      "--attr-source")
 HEREDOC = re.compile(r"(?<!<)<<(-?)\s*(\\?)(['\"]?)([A-Za-z_][\w.-]*)\3")
+REDIRECT = re.compile(r"[<>]+&?|&>+")
 SHELL_READS_HEREDOC = re.compile(r"(?:^|[;&|(])\s*(?:[^\s;&|(]*/)?(?:ba|z)?sh\b[^;&|<]*<<")
 
 FORCE = ("Blocked by .claude/hooks/guard-git-push.py: force-push is off for agents "
@@ -144,9 +145,19 @@ def tokens(text):
 
 
 def segments(toks):
-    seg = []
+    """Simple commands. A redirection goes, with its target and the fd before it: it does not end
+    the command (`gh pr merge -R o/r 2>&1 16` runs PR 16, `git push origin x > log -f` forces).
+    ponytail: `16>log` (an fd) and `16 >log` (an argument) tokenize alike, so a PR number right
+    before a redirection is dropped too: a refusal, not a pass."""
+    seg, target = [], False
     for t in toks:
-        if t and all(c in ";&|()<>" for c in t):
+        if target:
+            target = False
+        elif REDIRECT.fullmatch(t):
+            if seg and seg[-1].isdigit():
+                seg.pop()
+            target = True
+        elif t and all(c in ";&|()<>" for c in t):
             yield seg
             seg = []
         else:
@@ -192,7 +203,7 @@ def check_push(args):
 def check_gh(args):
     # The REST route to the same moves: PATCH (force) or DELETE on git/refs/heads/main; PUT on
     # pulls/N/merge; PUT, PATCH or DELETE on a ruleset. `gh api` without a method is GET or POST.
-    methods = {m.group(2).upper() for a in args for m in [re.fullmatch(r"(-X|--method=?)?(DELETE|PATCH|PUT)", a, re.I)] if m}
+    methods = {m.group(2).upper() for a in args for m in [re.fullmatch(r"(-X=?|--method=?)?(DELETE|PATCH|PUT)", a, re.I)] if m}
     if any(a.endswith("git/refs/heads/main") for a in args) and methods & {"DELETE", "PATCH"}:
         return API
     if methods and any(re.search(r"pulls/[^/]+/merge\b", a) for a in args):
@@ -202,6 +213,14 @@ def check_gh(args):
     if methods and any(re.search(r"(^|/)rulesets(/|$)", a) for a in args):
         return RULESET
     return None
+
+
+def check_pr(args):
+    """`gh pr ARGS`: cobra takes -R before the subcommand too (`gh pr -R o/r merge 5`)."""
+    k = 0
+    while k < len(args) and args[k].startswith("-"):
+        k += 2 if args[k] in ("-R", "--repo") else 1
+    return check_merge(args[:k] + args[k + 1:]) if args[k:k + 1] == ["merge"] else None
 
 
 def check_merge(args):
@@ -224,7 +243,6 @@ def check_merge(args):
         elif not a.startswith("-"):
             picks.append(a)
     m = re.fullmatch(r"(?:github\.com/)?([\w.-]+)/([\w.-]+)", repo)
-    # picks[0]: the fd of a redirection (`2>&1`) lands in picks too, after the PR number
     if not (m and picks and picks[0].isdigit()):
         return NAME_PR
     return check_files(m[1], m[2], picks[0])
@@ -284,8 +302,8 @@ def verdict(cmd):
             name = os.path.basename(t).lstrip("=").lower()  # zsh runs =git; APFS runs GIT
             if name == "git":
                 why = check_push(seg[i + 1:])
-            elif name == "gh" and seg[i + 1:i + 3] == ["pr", "merge"]:
-                why = check_merge(seg[i + 3:])
+            elif name == "gh" and seg[i + 1:i + 2] == ["pr"]:
+                why = check_pr(seg[i + 2:])
             elif name == "gh" and seg[i + 1:i + 2] == ["api"]:
                 why = check_gh(seg[i + 2:])
             elif name in SHELLS:
@@ -367,6 +385,10 @@ def selftest():
         "gh api -X PUT repos/o/r/rulesets/1 -f enforcement=disabled",
         "gh api -XDELETE repos/o/r/rulesets/1",
         "gh api --method PATCH repos/o/r/rulesets/7",
+        "gh api -X=DELETE repos/o/r/rulesets/1",
+        "gh api -X=DELETE repos/o/r/git/refs/heads/main",
+        # a redirection does not end the command: -f after it still forces
+        "git push origin main > log -f",
     ]
     allowed = [
         "git push origin main",
@@ -403,6 +425,8 @@ def selftest():
         "gh api -X POST repos/o/r/rulesets --input main.json",
         "gh api repos/o/r/rules/branches/main",
         "gh help pr merge",
+        "gh pr create --title merge --body x",
+        "git push origin main > /tmp/push.log 2>&1",
     ]
     fail = 0
     for cmd, want in [(c, True) for c in blocked] + [(c, False) for c in allowed]:
@@ -425,6 +449,12 @@ def selftest():
         ("gh pr merge 15 -R o/r", lock(15, "site/.claude/settings.json")),
         ("gh api -X PUT repos/o/r/pulls/11/merge", lock(11, ".github/workflows/studio-kit.yml")),
         ("gh pr merge 10 -R o/r && gh pr merge 12 -R o/r", lock(12, ".claude/hooks/guard-git-push.py")),
+        ("gh pr merge -R o/r --merge 2>&1 12", lock(12, ".claude/hooks/guard-git-push.py")),
+        ("gh pr merge -R o/r 2>/dev/null 12 --merge", lock(12, ".claude/hooks/guard-git-push.py")),
+        ("gh api -X=PUT repos/o/r/pulls/11/merge", lock(11, ".github/workflows/studio-kit.yml")),
+        ("gh pr -R o/r merge 12", lock(12, ".claude/hooks/guard-git-push.py")),
+        ("gh pr --repo=o/r merge 10 --merge", None),
+        ("gh pr -Ro/r merge 12", NAME_PR),
         ("gh pr merge 10 -R Dmitry-Wide/studio --merge", UNKNOWN.format("Dmitry-Wide/studio#10", "HTTP 404")),
         ("gh pr merge 10", NAME_PR),
         ("cd ../x && gh pr merge 10 --merge", NAME_PR),
