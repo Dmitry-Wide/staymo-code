@@ -10,7 +10,8 @@ Force-push is refused on every branch, not only main: the target of a bare `git 
 cannot be read from the command line, and the studio rule is "no push --force" anyway.
 To replace your own branch, push it under a new name.
 
-Source: Dmitry-Wide/studio .claude/hooks/guard-git-push.py. Edit there, copy to each repo.
+Source: Dmitry-Wide/studio-kit .claude/hooks/guard-git-push.py. Edit there; its tools/studio-copy.py
+copies it to each repo.
 Self-test: python3 .claude/hooks/guard-git-push.py --selftest
 """
 import json
