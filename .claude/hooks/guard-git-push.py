@@ -1,10 +1,16 @@
 #!/usr/bin/env python3
-"""PreToolUse hook: refuse a force-push, and any deletion of main, from Claude's shell tools.
+"""PreToolUse hook: refuse a force-push, any deletion of main, merging a PR and editing or deleting a
+GitHub ruleset, from Claude's shell tools.
 
 core.hooksPath does not travel to cloud sessions and most repos have no .githooks/pre-push,
 so this is the gate that goes wherever .claude/ goes. It stops accidents, not a determined
 push: aliases, scripts, eval, `... | sh`, `git -c remote.*.push=+...`, `git submodule foreach`,
-`rebase --exec`, `watch`, empty expansions ("${X}:main") and bash's $'...' quoting slip past it.
+`rebase --exec`, `watch`, empty expansions ("${X}:main"), bash's $'...' quoting and GraphQL
+mutations slip past it.
+
+The rulesets on GitHub reject a direct push to main, but the agents act with Dmitry's own token:
+GitHub cannot tell them from him. So merging a PR (Dmitry merges) and loosening a ruleset are
+refused here; creating a ruleset is allowed.
 
 Force-push is refused on every branch, not only main: the target of a bare `git push -f`
 cannot be read from the command line, and the studio rule is "no push --force" anyway.
@@ -36,6 +42,10 @@ DELETE = ("Blocked by .claude/hooks/guard-git-push.py: deleting main on the remo
           "for agents (--delete/-d main, :main, --prune). Ask Dmitry.")
 API = ("Blocked by .claude/hooks/guard-git-push.py: moving or deleting refs/heads/main "
        "through the GitHub API is off for agents. Ask Dmitry.")
+MERGE = ("Blocked by .claude/hooks/guard-git-push.py: merging a pull request is off for agents. "
+         "Dmitry merges: give him the PR link.")
+RULESET = ("Blocked by .claude/hooks/guard-git-push.py: editing or deleting a GitHub ruleset is off "
+           "for agents (creating one is allowed). Ask Dmitry.")
 
 
 def split_heredocs(cmd):
@@ -162,10 +172,15 @@ def check_push(args):
 
 
 def check_gh(args):
-    # The REST route to the same move: PATCH (force) or DELETE on git/refs/heads/main.
-    if (any(a.endswith("git/refs/heads/main") for a in args)
-            and any(re.fullmatch(r"(-X|--method=?)?(DELETE|PATCH)", a, re.I) for a in args)):
+    # The REST route to the same moves: PATCH (force) or DELETE on git/refs/heads/main; PUT on
+    # pulls/N/merge; PUT, PATCH or DELETE on a ruleset. `gh api` without a method is GET or POST.
+    methods = {m.group(2).upper() for a in args for m in [re.fullmatch(r"(-X|--method=?)?(DELETE|PATCH|PUT)", a, re.I)] if m}
+    if any(a.endswith("git/refs/heads/main") for a in args) and methods & {"DELETE", "PATCH"}:
         return API
+    if methods and any(re.search(r"/pulls/\d+/merge$", a) for a in args):
+        return MERGE
+    if methods and any(re.search(r"(^|/)rulesets(/|$)", a) for a in args):
+        return RULESET
     return None
 
 
@@ -194,6 +209,8 @@ def verdict(cmd):
             name = os.path.basename(t).lstrip("=").lower()  # zsh runs =git; APFS runs GIT
             if name == "git":
                 why = check_push(seg[i + 1:])
+            elif name == "gh" and seg[i + 1:i + 3] == ["pr", "merge"]:
+                why = MERGE
             elif name == "gh" and seg[i + 1:i + 2] == ["api"]:
                 why = check_gh(seg[i + 2:])
             elif name in SHELLS:
@@ -264,6 +281,14 @@ def selftest():
         # the same move through the REST API
         "gh api -X DELETE repos/o/r/git/refs/heads/main",
         "gh api --method PATCH repos/o/r/git/refs/heads/main -F force=true",
+        # merging is Dmitry's; a ruleset is loosened only by hand
+        "gh pr merge 10 -R Dmitry-Wide/studio --merge",
+        "cd x && gh pr merge --auto --squash",
+        "gh api -X PUT repos/o/r/pulls/10/merge",
+        "gh api --method=PUT /repos/o/r/pulls/10/merge -f merge_method=merge",
+        "gh api -X PUT repos/o/r/rulesets/1 -f enforcement=disabled",
+        "gh api -XDELETE repos/o/r/rulesets/1",
+        "gh api --method PATCH repos/o/r/rulesets/7",
     ]
     allowed = [
         "git push origin main",
@@ -293,6 +318,12 @@ def selftest():
         "git push --dry-run --porcelain origin main",
         "gh api repos/o/r/git/refs/heads/main",
         "gh api -X DELETE repos/o/r/git/refs/heads/claude/old",
+        "gh pr view 10 --json state,mergeStateStatus",
+        "gh pr create --title 'gh pr merge is off for agents'",
+        "gh api repos/o/r/pulls/10/merge",
+        "gh api repos/o/r/rulesets",
+        "gh api -X POST repos/o/r/rulesets --input main.json",
+        "gh api repos/o/r/rules/branches/main",
     ]
     fail = 0
     for cmd, want in [(c, True) for c in blocked] + [(c, False) for c in allowed]:
