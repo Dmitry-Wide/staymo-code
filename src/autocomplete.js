@@ -1,7 +1,7 @@
 /* Google Places address autocomplete — fills the nearest postal-code input.
    JS binds to contract attributes only; behaviour ported 1:1 from the inline embed.
-   Loads the Google Maps Places library once and attaches on focus (works for
-   inputs added later by the stepper/IX). The API key is a client-side,
+   Loads the Google Maps Places library once, on the first focus of an address
+   field, and attaches on focus (works for inputs added later by the stepper/IX). The API key is a client-side,
    referrer-restricted Maps key — already public in page markup. */
 
 export const GOOGLE_API_KEY = "AIzaSyBCf0dHApfYxWMyEAiR3hu4EPe6-4MzgKE";
@@ -146,7 +146,11 @@ export function initAutocomplete(doc = document) {
   doc.querySelectorAll(ADDRESS_SELECTOR).forEach(attachPlacesOnce);
 }
 
+// Load the Maps library (~400 KB) once, on demand — not on page load.
+let mapsRequested = false;
 function loadGoogleMaps(doc = document) {
+  if (mapsRequested) return;
+  mapsRequested = true;
   const script = doc.createElement("script");
   script.src = `https://maps.googleapis.com/maps/api/js?key=${GOOGLE_API_KEY}&libraries=places&callback=initAutocomplete`;
   script.async = true;
@@ -155,14 +159,16 @@ function loadGoogleMaps(doc = document) {
 }
 
 if (typeof window !== "undefined") {
-  // Attach on focus — covers inputs added later by the stepper/IX.
+  // Attach on focus — covers inputs added later by the stepper/IX. The first
+  // focus loads Maps; its callback (initAutocomplete) attaches every field.
   document.addEventListener("focusin", (e) => {
-    if (e.target?.matches(ADDRESS_SELECTOR)) attachPlacesOnce(e.target);
+    if (!e.target?.matches(ADDRESS_SELECTOR)) return;
+    if (window.google?.maps?.places?.Autocomplete) attachPlacesOnce(e.target);
+    else loadGoogleMaps();
   });
   // Google Maps calls this back once the Places library is ready.
   window.initAutocomplete = () => initAutocomplete();
   window.geolocate = () => console.log("Geolocate called.");
   // Exposed for the funnel engine (cross-module, avoids ESM version pinning).
   window.staymoIsRealAddress = isRealAddress;
-  window.addEventListener("DOMContentLoaded", () => loadGoogleMaps());
 }
