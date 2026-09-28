@@ -1,8 +1,10 @@
 /* Google Places address autocomplete — fills the nearest postal-code input.
    JS binds to contract attributes only; behaviour ported 1:1 from the inline embed.
    Loads the Google Maps Places library once and attaches on focus (works for
-   inputs added later by the stepper/IX). The API key is a client-side,
-   referrer-restricted Maps key — already public in page markup. */
+   inputs added later by the stepper/IX). The API key is a browser key,
+   restricted by website referrer — already public in page markup. Referrer
+   restrictions only cover client-side APIs, so geocoding goes through
+   google.maps.Geocoder (Maps JS API), never the Geocoding REST web service. */
 
 export const GOOGLE_API_KEY = "AIzaSyBCf0dHApfYxWMyEAiR3hu4EPe6-4MzgKE";
 
@@ -13,6 +15,21 @@ const POSTAL_SELECTOR = '[data-input-id="postal-code-result"]';
 export function extractPostal(components) {
   const comps = components || [];
   return comps.find((c) => c.types?.includes("postal_code"))?.long_name || "";
+}
+
+// Geocode through the Maps JS API (works under a referrer-restricted key).
+// Resolves to the results array; [] on no match, error or Maps not loaded yet.
+export async function geocode(request) {
+  const Geocoder = window.google?.maps?.Geocoder;
+  if (!Geocoder) return [];
+  try {
+    const { results } = await new Geocoder().geocode(request);
+    return results || [];
+  } catch (e) {
+    // ZERO_RESULTS rejects too — only real failures are worth logging.
+    if (e?.code !== "ZERO_RESULTS") console.error("Geocode error:", e);
+    return [];
+  }
 }
 
 // Ordinal position of an element in a document-order walk of element nodes.
@@ -71,18 +88,11 @@ export function attachPlacesOnce(addressInput) {
     if (postalCodeInput.value) return;
     const placeText = addressInput.value.trim();
     if (!placeText) return;
-    fetch(
-      `https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(
-        placeText
-      )}&key=${GOOGLE_API_KEY}`
-    )
-      .then((r) => r.json())
-      .then((data) => {
-        if (data.status !== "OK" || !data.results?.length) return;
-        const postal = extractPostal(data.results[0].address_components);
-        if (postal) postalCodeInput.value = postal;
-      })
-      .catch((err) => console.error("Geocode fallback error:", err));
+    geocode({ address: placeText }).then((results) => {
+      if (!results.length) return;
+      const postal = extractPostal(results[0].address_components);
+      if (postal) postalCodeInput.value = postal;
+    });
   }
   const autocomplete = new google.maps.places.Autocomplete(addressInput, {
     fields: ["address_components", "geometry"],
@@ -126,20 +136,14 @@ export async function isRealAddress(addressInput, postcodeInput) {
   if (postal && String(postal.value || "").trim()) return true;
   const text = String(addressInput.value || "").trim();
   if (!text) return false;
-  try {
-    const r = await fetch(
-      `https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(
-        text
-      )}&components=country:GB&key=${GOOGLE_API_KEY}`
-    );
-    const data = await r.json();
-    if (data.status !== "OK" || !data.results?.length) return false;
-    const found = extractPostal(data.results[0].address_components);
-    if (found && postal) postal.value = found;
-    return !!found;
-  } catch (e) {
-    return false;
-  }
+  const results = await geocode({
+    address: text,
+    componentRestrictions: { country: "GB" },
+  });
+  if (!results.length) return false;
+  const found = extractPostal(results[0].address_components);
+  if (found && postal) postal.value = found;
+  return !!found;
 }
 
 export function initAutocomplete(doc = document) {
