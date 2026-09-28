@@ -26,6 +26,18 @@
     ]
   },
   "permissions": {
+    "allow": [
+      "mcp__Webflow",
+      "mcp__claude_ai_Webflow",
+      "mcp__Figma",
+      "mcp__claude_ai_Figma",
+      "mcp__Claude_Docs",
+      "mcp__claude_ai_Claude_Docs",
+      "mcp__Google_Drive",
+      "mcp__claude_ai_Google_Drive",
+      "mcp__playwright",
+      "mcp__plugin_context7_context7"
+    ],
     "deny": [
       "mcp__github__merge_pull_request",
       "mcp__github__enable_pr_auto_merge"
