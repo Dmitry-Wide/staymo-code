@@ -128,3 +128,42 @@ describe("findNearestPostalInput", () => {
     expect(findNearestPostalInput(addr).value).toBe("near");
   });
 });
+
+describe("lazy Maps loading", () => {
+  const mapsScripts = () =>
+    document.querySelectorAll('script[src*="maps.googleapis.com/maps/api/js"]').length;
+
+  afterEach(() => {
+    delete window.google;
+  });
+
+  it("no Maps script after DOMContentLoaded, one after focusing the address field", () => {
+    document.body.innerHTML = `
+      <form>
+        <input id="other">
+        <input data-input-id="address-search">
+        <input data-input-id="postal-code-result">
+      </form>`;
+    window.dispatchEvent(new Event("DOMContentLoaded"));
+    document.dispatchEvent(new Event("DOMContentLoaded"));
+    expect(mapsScripts()).toBe(0);
+
+    document.getElementById("other").focus();
+    expect(mapsScripts()).toBe(0);
+
+    const addr = document.querySelector('[data-input-id="address-search"]');
+    addr.focus();
+    addr.blur();
+    addr.focus();
+    expect(mapsScripts()).toBe(1);
+
+    // Maps callback attaches the already-focused field.
+    const Autocomplete = vi.fn(function () {
+      this.addListener = vi.fn();
+    });
+    window.google = { maps: { places: { Autocomplete } } };
+    window.initAutocomplete();
+    expect(addr.dataset.placesAttached).toBe("1");
+    expect(Autocomplete).toHaveBeenCalledTimes(1);
+  });
+});
