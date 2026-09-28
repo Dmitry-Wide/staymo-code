@@ -1,10 +1,11 @@
 /* Google Places address autocomplete — fills the nearest postal-code input.
    JS binds to contract attributes only; behaviour ported 1:1 from the inline embed.
-   Loads the Google Maps Places library once and attaches on focus (works for
-   inputs added later by the stepper/IX). The API key is a browser key,
-   restricted by website referrer — already public in page markup. Referrer
-   restrictions only cover client-side APIs, so geocoding goes through
-   google.maps.Geocoder (Maps JS API), never the Geocoding REST web service. */
+   Loads the Google Maps Places library once, on the first focus of an address
+   field, and attaches on focus (works for inputs added later by the stepper/IX).
+   The API key is a browser key, restricted by website referrer — already public
+   in page markup. Referrer restrictions only cover client-side APIs, so
+   geocoding goes through google.maps.Geocoder (Maps JS API), never the
+   Geocoding REST web service. */
 
 export const GOOGLE_API_KEY = "AIzaSyBCf0dHApfYxWMyEAiR3hu4EPe6-4MzgKE";
 
@@ -17,13 +18,27 @@ export function extractPostal(components) {
   return comps.find((c) => c.types?.includes("postal_code"))?.long_name || "";
 }
 
+// Resolves true once the Maps library is ready — loading it if nobody focused
+// the address field yet (Maps is lazy) — or false after timeoutMs.
+const mapsWaiters = [];
+export function whenMapsReady(timeoutMs = 10000) {
+  if (window.google?.maps?.Geocoder) return Promise.resolve(true);
+  loadGoogleMaps();
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => resolve(false), timeoutMs);
+    mapsWaiters.push(() => {
+      clearTimeout(timer);
+      resolve(true);
+    });
+  });
+}
+
 // Geocode through the Maps JS API (works under a referrer-restricted key).
-// Resolves to the results array; [] on no match, error or Maps not loaded yet.
+// Resolves to the results array; [] on no match, error or Maps not loading.
 export async function geocode(request) {
-  const Geocoder = window.google?.maps?.Geocoder;
-  if (!Geocoder) return [];
+  if (!(await whenMapsReady())) return [];
   try {
-    const { results } = await new Geocoder().geocode(request);
+    const { results } = await new window.google.maps.Geocoder().geocode(request);
     return results || [];
   } catch (e) {
     // ZERO_RESULTS rejects too — only real failures are worth logging.
@@ -150,7 +165,11 @@ export function initAutocomplete(doc = document) {
   doc.querySelectorAll(ADDRESS_SELECTOR).forEach(attachPlacesOnce);
 }
 
+// Load the Maps library (~400 KB) once, on demand — not on page load.
+let mapsRequested = false;
 function loadGoogleMaps(doc = document) {
+  if (mapsRequested) return;
+  mapsRequested = true;
   const script = doc.createElement("script");
   script.src = `https://maps.googleapis.com/maps/api/js?key=${GOOGLE_API_KEY}&libraries=places&callback=initAutocomplete`;
   script.async = true;
@@ -159,14 +178,19 @@ function loadGoogleMaps(doc = document) {
 }
 
 if (typeof window !== "undefined") {
-  // Attach on focus — covers inputs added later by the stepper/IX.
+  // Attach on focus — covers inputs added later by the stepper/IX. The first
+  // focus loads Maps; its callback (initAutocomplete) attaches every field.
   document.addEventListener("focusin", (e) => {
-    if (e.target?.matches(ADDRESS_SELECTOR)) attachPlacesOnce(e.target);
+    if (!e.target?.matches(ADDRESS_SELECTOR)) return;
+    if (window.google?.maps?.places?.Autocomplete) attachPlacesOnce(e.target);
+    else loadGoogleMaps();
   });
   // Google Maps calls this back once the Places library is ready.
-  window.initAutocomplete = () => initAutocomplete();
+  window.initAutocomplete = () => {
+    mapsWaiters.splice(0).forEach((resolve) => resolve());
+    initAutocomplete();
+  };
   window.geolocate = () => console.log("Geolocate called.");
   // Exposed for the funnel engine (cross-module, avoids ESM version pinning).
   window.staymoIsRealAddress = isRealAddress;
-  window.addEventListener("DOMContentLoaded", () => loadGoogleMaps());
 }

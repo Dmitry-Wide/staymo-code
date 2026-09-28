@@ -85,11 +85,6 @@ describe("isRealAddress", () => {
     err.mockRestore();
   });
 
-  it("false when Maps is not loaded yet", async () => {
-    vi.stubGlobal("google", undefined);
-    expect(await isRealAddress(mkAddr("25 Wilton Road London"), mkPostal())).toBe(false);
-  });
-
   it("false for empty input, without geocode", async () => {
     const spy = stubGeocode("X");
     expect(await isRealAddress(mkAddr("   "), mkPostal())).toBe(false);
@@ -156,5 +151,72 @@ describe("findNearestPostalInput", () => {
       <input data-input-id="postal-code-result" value="near">`;
     const addr = document.querySelector('[data-input-id="address-search"]');
     expect(findNearestPostalInput(addr).value).toBe("near");
+  });
+});
+
+describe("lazy Maps loading", () => {
+  const inputWith = (value) => {
+    const i = document.createElement("input");
+    i.value = value;
+    return i;
+  };
+  const mapsScripts = () =>
+    document.querySelectorAll('script[src*="maps.googleapis.com/maps/api/js"]').length;
+
+  afterEach(() => {
+    delete window.google;
+  });
+
+  it("no Maps script after DOMContentLoaded, one after focusing the address field", () => {
+    document.body.innerHTML = `
+      <form>
+        <input id="other">
+        <input data-input-id="address-search">
+        <input data-input-id="postal-code-result">
+      </form>`;
+    window.dispatchEvent(new Event("DOMContentLoaded"));
+    document.dispatchEvent(new Event("DOMContentLoaded"));
+    expect(mapsScripts()).toBe(0);
+
+    document.getElementById("other").focus();
+    expect(mapsScripts()).toBe(0);
+
+    const addr = document.querySelector('[data-input-id="address-search"]');
+    addr.focus();
+    addr.blur();
+    addr.focus();
+    expect(mapsScripts()).toBe(1);
+
+    // Maps callback attaches the already-focused field.
+    const Autocomplete = vi.fn(function () {
+      this.addListener = vi.fn();
+    });
+    window.google = { maps: { places: { Autocomplete } } };
+    window.initAutocomplete();
+    expect(addr.dataset.placesAttached).toBe("1");
+    expect(Autocomplete).toHaveBeenCalledTimes(1);
+  });
+
+  // Engine may validate step 1 before the lazily loaded Maps is ready.
+  it("isRealAddress waits for Maps to load, then geocodes", async () => {
+    const pending = isRealAddress(inputWith("25 Wilton Road London"), inputWith(""));
+    const geocode = vi.fn(async () => ({
+      results: [{ address_components: [{ types: ["postal_code"], long_name: "SW1V 1LW" }] }],
+    }));
+    window.google = { maps: { Geocoder: class { geocode(r) { return geocode(r); } } } };
+    window.initAutocomplete();
+    expect(await pending).toBe(true);
+    expect(geocode).toHaveBeenCalledTimes(1);
+  });
+
+  it("isRealAddress gives up (false) when Maps never loads", async () => {
+    vi.useFakeTimers();
+    try {
+      const pending = isRealAddress(inputWith("25 Wilton Road London"), inputWith(""));
+      await vi.advanceTimersByTimeAsync(10000);
+      expect(await pending).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
