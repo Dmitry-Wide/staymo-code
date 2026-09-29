@@ -6,10 +6,12 @@
    in page markup. Referrer restrictions only cover client-side APIs, so
    geocoding goes through google.maps.Geocoder (Maps JS API), never the
    Geocoding REST web service.
-   An address counts when it is a dropdown pick, or typed text (an address or a
-   postcode) that Google resolves to a full UK postcode without a partial match;
-   the field then shows the address as Google understood it. Anything else shows
-   a hint under the field. */
+   An address counts when it has a UK postcode — full ("SW1V 1LW") or just the
+   outward part ("E14", enough for a first estimate): from a dropdown pick (looked
+   up if the place has none, e.g. a street), or typed text (an address or a
+   postcode) that Google resolves without a partial match; the field then shows
+   the address as Google understood it. Anything else shows a hint under the
+   field — never a silent dead button. */
 
 export const GOOGLE_API_KEY = "AIzaSyBCf0dHApfYxWMyEAiR3hu4EPe6-4MzgKE";
 
@@ -87,17 +89,39 @@ export function clearAddrError(addressInput) {
   if (hint && hint.classList.contains(HINT_CLASS)) hint.remove();
 }
 
-// Full UK postcode, e.g. "SW1V 1LW" (an outward code alone like "SW1V" is not enough).
-const FULL_POSTCODE = /^[A-Z]{1,2}\d[A-Z\d]?\s*\d[A-Z]{2}$/i;
+// UK postcode, full ("SW1V 1LW") or outward only ("E14", "WC1", "SE25") — the outward
+// part is enough for a first estimate (streets and districts carry only that).
+const POSTCODE = /^[A-Z]{1,2}\d[A-Z\d]?(\s*\d[A-Z]{2})?$/i;
+
+// Places too broad to estimate: a whole town, region or country.
+const TOO_BROAD = ["locality", "postal_town", "administrative_area_level_1",
+  "administrative_area_level_2", "administrative_area_level_3", "country"];
+
+// Postcode for a geocode result. Streets and districts (e.g. "Canary Wharf") often carry
+// none, so take the outward part ("E14") of the postcode nearest to their centre.
+// "" for a whole town/region or when nothing is found.
+export async function postcodeForResult(top) {
+  if (!top) return "";
+  const own = extractPostal(top.address_components);
+  if (POSTCODE.test(own)) return own;
+  if ((top.types || []).some((t) => TOO_BROAD.includes(t))) return "";
+  const location = top.geometry?.location;
+  if (!location) return "";
+  for (const r of await geocode({ location })) {
+    const near = extractPostal(r.address_components);
+    if (POSTCODE.test(near)) return near.split(/\s+/)[0].toUpperCase();
+  }
+  return "";
+}
 
 // Resolve typed text (an address or a postcode) to { address, postal }, or null when
-// Google only guessed (partial match) or found no full postcode.
+// Google only guessed (partial match) or found no postcode (e.g. just "London").
 export async function resolveTypedAddress(text) {
   const results = await geocode({ address: text, componentRestrictions: { country: "GB" } });
   const top = results[0];
   if (!top || top.partial_match) return null;
-  const postal = extractPostal(top.address_components);
-  if (!FULL_POSTCODE.test(postal)) return null;
+  const postal = await postcodeForResult(top);
+  if (!postal) return null;
   const address = String(top.formatted_address || text).replace(/,\s*UK$/, "");
   return { address, postal };
 }
@@ -185,19 +209,25 @@ export async function fillPostcodeFromPick(addressInput, postalInput) {
   const text = String(addressInput.value || "").trim();
   if (!text) return;
   const results = await geocode({ address: text, componentRestrictions: { country: "GB" } });
-  const postal = results.length ? extractPostal(results[0].address_components) : "";
+  const postal = await postcodeForResult(results[0]);
   if (postal && addressInput.dataset.placeSelected === "1") postalInput.value = postal;
 }
 
-// True for a dropdown pick, a postcode already filled (e.g. prefilled from another
-// page), or typed text that resolves to a full UK postcode — then the field shows
-// Google's address and the postcode input is filled. Otherwise shows the hint.
-// Used by the funnel engine to gate the address step.
+// True for a dropdown pick with a postcode (looked up if the place has none), a
+// postcode already filled (e.g. prefilled from another page), or typed text that
+// resolves to a UK postcode — then the field shows Google's address and the
+// postcode input is filled. Otherwise shows the hint. Used by the funnel engine to
+// gate the address step.
 export async function isRealAddress(addressInput, postcodeInput) {
   if (!addressInput) return false;
   const postal = postcodeInput || findNearestPostalInput(addressInput);
   if (addressInput.dataset.placeSelected === "1") {
     await fillPostcodeFromPick(addressInput, postal);
+    // A pick Google has no postcode for (e.g. a whole city) cannot be estimated.
+    if (postal && !String(postal.value || "").trim()) {
+      showAddrError(addressInput);
+      return false;
+    }
     clearAddrError(addressInput);
     return true;
   }

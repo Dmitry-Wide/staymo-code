@@ -114,9 +114,50 @@ describe("isRealAddress", () => {
     expect(addr.nextElementSibling.textContent).toBe(ADDR_HINT);
   });
 
-  it("a result with only an outward code (e.g. 'SW1V') is rejected", async () => {
-    stubResult(place("SW1V", "Pimlico, London SW1V, UK"));
-    expect(await isRealAddress(mkAddr("pimlico"), mkPostal())).toBe(false);
+  it("a street or district with only an outward code (e.g. 'E14') passes", async () => {
+    stubResult(place("E14", "Canary Wharf, London E14, UK"));
+    const postal = mkPostal();
+    expect(await isRealAddress(mkAddr("canary wharf"), postal)).toBe(true);
+    expect(postal.value).toBe("E14");
+  });
+
+  it("a place with no postcode at all (e.g. 'London') is rejected", async () => {
+    const spy = stubResult({ ...place("", "London, UK"), types: ["locality", "political"] });
+    expect(await isRealAddress(mkAddr("london"), mkPostal())).toBe(false);
+    expect(spy).toHaveBeenCalledTimes(1); // no nearest-postcode lookup for a whole town
+  });
+
+  it("a district with no postcode (e.g. 'Canary Wharf') gets the outward code nearest its centre", async () => {
+    const centre = { lat: 51.505, lng: -0.02 };
+    const spy = stubGeocoder(async (req) =>
+      req.location
+        ? { results: [place("E14 5AB", "1 Canada Sq, London E14 5AB, UK")] }
+        : { results: [{ ...place("", "Canary Wharf, London, UK"), types: ["neighborhood", "political"], geometry: { location: centre } }] }
+    );
+    const addr = mkAddr("canary wharf");
+    const postal = mkPostal();
+    expect(await isRealAddress(addr, postal)).toBe(true);
+    expect(postal.value).toBe("E14");
+    expect(addr.value).toBe("Canary Wharf, London");
+    expect(spy).toHaveBeenLastCalledWith({ location: centre });
+  });
+
+  it("a pick Google has no postcode for shows the hint instead of passing silently", async () => {
+    stubResult(place("", "London, UK"));
+    document.body.innerHTML = "<div><input></div>";
+    const addr = document.querySelector("input");
+    addr.value = "London, UK";
+    addr.dataset.placeSelected = "1";
+    const postal = mkPostal();
+    expect(await isRealAddress(addr, postal)).toBe(false);
+    expect(addr.nextElementSibling.textContent).toBe(ADDR_HINT);
+  });
+
+  it("a street pick gets the street's outward postcode and passes", async () => {
+    stubResult(place("NW1", "Baker St, London NW1, UK"));
+    const postal = mkPostal();
+    expect(await isRealAddress(mkAddr("Baker Street, London, UK", "1"), postal)).toBe(true);
+    expect(postal.value).toBe("NW1");
   });
 
   it("junk that does not geocode is rejected and shows the hint", async () => {
@@ -287,7 +328,7 @@ describe("lazy Maps loading", () => {
     expect(geocode).toHaveBeenCalledTimes(1);
   });
 
-  it("a pick stays valid when Maps never loads (postcode left empty)", async () => {
+  it("a pick without a postcode is refused when Maps never loads (no postcode to estimate)", async () => {
     vi.useFakeTimers();
     try {
       const addr = inputWith("Wilton Road, London");
@@ -295,7 +336,7 @@ describe("lazy Maps loading", () => {
       const postal = inputWith("");
       const pending = isRealAddress(addr, postal);
       await vi.advanceTimersByTimeAsync(10000);
-      expect(await pending).toBe(true);
+      expect(await pending).toBe(false);
       expect(postal.value).toBe("");
     } finally {
       vi.useRealTimers();
