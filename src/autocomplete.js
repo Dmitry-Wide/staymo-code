@@ -6,8 +6,10 @@
    in page markup. Referrer restrictions only cover client-side APIs, so
    geocoding goes through google.maps.Geocoder (Maps JS API), never the
    Geocoding REST web service.
-   Only a dropdown pick counts as an address: typed text is never geocoded into
-   a pass. Clicking on without a pick shows a hint under the field. */
+   An address counts when it is a dropdown pick, or typed text (an address or a
+   postcode) that Google resolves to a full UK postcode without a partial match;
+   the field then shows the address as Google understood it. Anything else shows
+   a hint under the field. */
 
 export const GOOGLE_API_KEY = "AIzaSyBCf0dHApfYxWMyEAiR3hu4EPe6-4MzgKE";
 
@@ -51,7 +53,7 @@ export async function geocode(request) {
 
 // --- "Choose an address from the list" hint, placed right after the input ---
 const HINT_CLASS = "staymo-addr-error";
-export const ADDR_HINT = "Choose an address from the list";
+export const ADDR_HINT = "Choose an address from the list or enter a postcode";
 
 function injectHintStyle(doc) {
   if (doc.getElementById("staymo-addr-err-style")) return;
@@ -83,6 +85,21 @@ export function clearAddrError(addressInput) {
   addressInput.classList.remove("is-error");
   const hint = addressInput.nextElementSibling;
   if (hint && hint.classList.contains(HINT_CLASS)) hint.remove();
+}
+
+// Full UK postcode, e.g. "SW1V 1LW" (an outward code alone like "SW1V" is not enough).
+const FULL_POSTCODE = /^[A-Z]{1,2}\d[A-Z\d]?\s*\d[A-Z]{2}$/i;
+
+// Resolve typed text (an address or a postcode) to { address, postal }, or null when
+// Google only guessed (partial match) or found no full postcode.
+export async function resolveTypedAddress(text) {
+  const results = await geocode({ address: text, componentRestrictions: { country: "GB" } });
+  const top = results[0];
+  if (!top || top.partial_match) return null;
+  const postal = extractPostal(top.address_components);
+  if (!FULL_POSTCODE.test(postal)) return null;
+  const address = String(top.formatted_address || text).replace(/,\s*UK$/, "");
+  return { address, postal };
 }
 
 // Ordinal position of an element in a document-order walk of element nodes.
@@ -172,10 +189,10 @@ export async function fillPostcodeFromPick(addressInput, postalInput) {
   if (postal && addressInput.dataset.placeSelected === "1") postalInput.value = postal;
 }
 
-// True only for a real dropdown pick (or a postcode prefilled from another page's
-// pick); otherwise shows the "choose from the list" hint. For a pick without a
-// postcode it looks the postcode up first. Used by the funnel engine to gate the
-// address step.
+// True for a dropdown pick, a postcode already filled (e.g. prefilled from another
+// page), or typed text that resolves to a full UK postcode — then the field shows
+// Google's address and the postcode input is filled. Otherwise shows the hint.
+// Used by the funnel engine to gate the address step.
 export async function isRealAddress(addressInput, postcodeInput) {
   if (!addressInput) return false;
   const postal = postcodeInput || findNearestPostalInput(addressInput);
@@ -185,8 +202,16 @@ export async function isRealAddress(addressInput, postcodeInput) {
     return true;
   }
   if (postal && String(postal.value || "").trim()) return true;
-  showAddrError(addressInput);
-  return false;
+  const text = String(addressInput.value || "").trim();
+  const found = text ? await resolveTypedAddress(text) : null;
+  if (!found) {
+    showAddrError(addressInput);
+    return false;
+  }
+  addressInput.value = found.address;
+  if (postal) postal.value = found.postal;
+  clearAddrError(addressInput);
+  return true;
 }
 
 export function initAutocomplete(doc = document) {
