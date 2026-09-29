@@ -4,7 +4,7 @@ Versioned front-end modules (JS/CSS) for the Staymo Webflow project, served via 
 
 - `src/` — modules (vanilla ES, no build). `tests/` — Vitest + happy-dom.
 - JS binds to `data-*` attributes only, never to classes.
-- Release: `git tag vX.Y.Z && git push --tags`. CDN: `https://cdn.jsdelivr.net/gh/Dmitry-Wide/staymo-code@vX.Y.Z/src/<file>`.
+- Release: Actions → **Release** → Run workflow with `version: vX.Y.Z` (tests, tags main, prints SRI in the run summary; agents trigger it via the API since they cannot push tags). Manual fallback: `git tag vX.Y.Z && git push --tags`. CDN: `https://cdn.jsdelivr.net/gh/Dmitry-Wide/staymo-code@vX.Y.Z/src/<file>`.
 
 ## Local + Webflow from one URL
 

@@ -1,0 +1,83 @@
+name: Release
+
+# Tags a commit on main as vX.Y.Z and prints the jsDelivr SRI hashes.
+# Run from Actions → Release → Run workflow, or by an agent via the API
+# (agent sessions cannot push tags or reach jsDelivr themselves).
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Tag to create, e.g. v0.36.1"
+        required: true
+      commit:
+        description: "Commit on main to tag (empty = current main)"
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    env:
+      VERSION: ${{ inputs.version }}
+      COMMIT: ${{ inputs.commit }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Check version and commit
+        run: |
+          [[ "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::version must look like v1.2.3"; exit 1; }
+          if git ls-remote --exit-code --tags origin "refs/tags/$VERSION" >/dev/null; then
+            echo "::error::tag $VERSION already exists"; exit 1
+          fi
+          SHA=$(git rev-parse --verify "${COMMIT:-origin/main}^{commit}")
+          git merge-base --is-ancestor "$SHA" origin/main || { echo "::error::$SHA is not on main"; exit 1; }
+          echo "SHA=$SHA" >> "$GITHUB_ENV"
+          echo "Tagging $SHA as $VERSION"
+
+      - name: Test the commit being tagged
+        run: |
+          git checkout -q "$SHA"
+          npm ci
+          npm test
+
+      - name: Tag
+        run: |
+          git tag "$VERSION" "$SHA"
+          git push origin "refs/tags/$VERSION"
+
+      - name: SRI for jsDelivr
+        run: |
+          set -o pipefail
+          {
+            echo "## $VERSION → \`${SHA:0:7}\`"
+            echo
+            echo "| File | integrity |"
+            echo "|---|---|"
+          } >> "$GITHUB_STEP_SUMMARY"
+          for f in src/*; do
+            url="https://cdn.jsdelivr.net/gh/${GITHUB_REPOSITORY}@${VERSION}/${f}"
+            local_sri="sha384-$(openssl dgst -sha384 -binary "$f" | openssl base64 -A)"
+            cdn_sri=""
+            for i in 1 2 3 4 5 6; do
+              if body=$(curl -fsS "$url" | openssl dgst -sha384 -binary | openssl base64 -A) && [ -n "$body" ]; then
+                cdn_sri="sha384-$body"; break
+              fi
+              sleep 10
+            done
+            if [ "$cdn_sri" != "$local_sri" ]; then
+              echo "::warning::$f: jsDelivr hash '$cdn_sri' differs from the repo file '$local_sri'"
+            fi
+            echo "$f $local_sri"
+            echo "| \`$f\` | \`$local_sri\` |" >> "$GITHUB_STEP_SUMMARY"
+          done
