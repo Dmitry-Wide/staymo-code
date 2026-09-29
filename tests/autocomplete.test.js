@@ -122,8 +122,24 @@ describe("isRealAddress", () => {
   });
 
   it("a place with no postcode at all (e.g. 'London') is rejected", async () => {
-    stubResult(place("", "London, UK"));
+    const spy = stubResult({ ...place("", "London, UK"), types: ["locality", "political"] });
     expect(await isRealAddress(mkAddr("london"), mkPostal())).toBe(false);
+    expect(spy).toHaveBeenCalledTimes(1); // no nearest-postcode lookup for a whole town
+  });
+
+  it("a district with no postcode (e.g. 'Canary Wharf') gets the outward code nearest its centre", async () => {
+    const centre = { lat: 51.505, lng: -0.02 };
+    const spy = stubGeocoder(async (req) =>
+      req.location
+        ? { results: [place("E14 5AB", "1 Canada Sq, London E14 5AB, UK")] }
+        : { results: [{ ...place("", "Canary Wharf, London, UK"), types: ["neighborhood", "political"], geometry: { location: centre } }] }
+    );
+    const addr = mkAddr("canary wharf");
+    const postal = mkPostal();
+    expect(await isRealAddress(addr, postal)).toBe(true);
+    expect(postal.value).toBe("E14");
+    expect(addr.value).toBe("Canary Wharf, London");
+    expect(spy).toHaveBeenLastCalledWith({ location: centre });
   });
 
   it("a pick Google has no postcode for shows the hint instead of passing silently", async () => {

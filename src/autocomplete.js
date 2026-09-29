@@ -93,14 +93,35 @@ export function clearAddrError(addressInput) {
 // part is enough for a first estimate (streets and districts carry only that).
 const POSTCODE = /^[A-Z]{1,2}\d[A-Z\d]?(\s*\d[A-Z]{2})?$/i;
 
+// Places too broad to estimate: a whole town, region or country.
+const TOO_BROAD = ["locality", "postal_town", "administrative_area_level_1",
+  "administrative_area_level_2", "administrative_area_level_3", "country"];
+
+// Postcode for a geocode result. Streets and districts (e.g. "Canary Wharf") often carry
+// none, so take the outward part ("E14") of the postcode nearest to their centre.
+// "" for a whole town/region or when nothing is found.
+export async function postcodeForResult(top) {
+  if (!top) return "";
+  const own = extractPostal(top.address_components);
+  if (POSTCODE.test(own)) return own;
+  if ((top.types || []).some((t) => TOO_BROAD.includes(t))) return "";
+  const location = top.geometry?.location;
+  if (!location) return "";
+  for (const r of await geocode({ location })) {
+    const near = extractPostal(r.address_components);
+    if (POSTCODE.test(near)) return near.split(/\s+/)[0].toUpperCase();
+  }
+  return "";
+}
+
 // Resolve typed text (an address or a postcode) to { address, postal }, or null when
 // Google only guessed (partial match) or found no postcode (e.g. just "London").
 export async function resolveTypedAddress(text) {
   const results = await geocode({ address: text, componentRestrictions: { country: "GB" } });
   const top = results[0];
   if (!top || top.partial_match) return null;
-  const postal = extractPostal(top.address_components);
-  if (!POSTCODE.test(postal)) return null;
+  const postal = await postcodeForResult(top);
+  if (!postal) return null;
   const address = String(top.formatted_address || text).replace(/,\s*UK$/, "");
   return { address, postal };
 }
@@ -188,8 +209,8 @@ export async function fillPostcodeFromPick(addressInput, postalInput) {
   const text = String(addressInput.value || "").trim();
   if (!text) return;
   const results = await geocode({ address: text, componentRestrictions: { country: "GB" } });
-  const postal = results.length ? extractPostal(results[0].address_components) : "";
-  if (POSTCODE.test(postal) && addressInput.dataset.placeSelected === "1") postalInput.value = postal;
+  const postal = await postcodeForResult(results[0]);
+  if (postal && addressInput.dataset.placeSelected === "1") postalInput.value = postal;
 }
 
 // True for a dropdown pick with a postcode (looked up if the place has none), a
