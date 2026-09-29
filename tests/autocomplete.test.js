@@ -68,15 +68,63 @@ describe("isRealAddress", () => {
     expect(spy).not.toHaveBeenCalled();
   });
 
-  it("typed text without a pick is rejected, never geocoded, and shows the hint", async () => {
-    const spy = stubGeocode("SW1V 1LW");
-    document.body.innerHTML = "<div><input><button>Next</button></div>";
+  // Geocoder result stub: { formatted_address, partial_match, address_components }.
+  const stubResult = (result) =>
+    stubGeocoder(async () => (result ? { results: [result] } : Promise.reject(
+      Object.assign(new Error("ZERO_RESULTS"), { code: "ZERO_RESULTS" })
+    )));
+  const place = (postal, formatted, partial) => ({
+    formatted_address: formatted,
+    partial_match: partial,
+    address_components: postal ? [{ types: ["postal_code"], long_name: postal }] : [],
+  });
+
+  it("typed address resolving to a full postcode passes; field shows Google's address", async () => {
+    const fetchSpy = vi.fn();
+    vi.stubGlobal("fetch", fetchSpy);
+    const spy = stubResult(place("SW1V 1LW", "25 Wilton Rd, London SW1V 1LW, UK"));
+    const addr = mkAddr("25 wilton road london");
+    const postal = mkPostal();
+    expect(await isRealAddress(addr, postal)).toBe(true);
+    expect(postal.value).toBe("SW1V 1LW");
+    expect(addr.value).toBe("25 Wilton Rd, London SW1V 1LW");
+    expect(spy).toHaveBeenCalledWith({
+      address: "25 wilton road london",
+      componentRestrictions: { country: "GB" },
+    });
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("a typed postcode passes", async () => {
+    stubResult(place("SW1V 1LW", "London SW1V 1LW, UK"));
+    const postal = mkPostal();
+    expect(await isRealAddress(mkAddr("sw1v1lw"), postal)).toBe(true);
+    expect(postal.value).toBe("SW1V 1LW");
+  });
+
+  it("a partial match (Google only guessed) is rejected with the hint", async () => {
+    stubResult(place("SW1V 1LW", "Wilton Rd, London SW1V 1LW, UK", true));
+    document.body.innerHTML = "<div><input></div>";
     const addr = document.querySelector("input");
-    addr.value = "25 Wilton Road London";
+    addr.value = "wilten rood";
     const postal = mkPostal();
     expect(await isRealAddress(addr, postal)).toBe(false);
-    expect(spy).not.toHaveBeenCalled();
     expect(postal.value).toBe("");
+    expect(addr.value).toBe("wilten rood");
+    expect(addr.nextElementSibling.textContent).toBe(ADDR_HINT);
+  });
+
+  it("a result with only an outward code (e.g. 'SW1V') is rejected", async () => {
+    stubResult(place("SW1V", "Pimlico, London SW1V, UK"));
+    expect(await isRealAddress(mkAddr("pimlico"), mkPostal())).toBe(false);
+  });
+
+  it("junk that does not geocode is rejected and shows the hint", async () => {
+    stubResult(null);
+    document.body.innerHTML = "<div><input><button>Next</button></div>";
+    const addr = document.querySelector("input");
+    addr.value = "123123";
+    expect(await isRealAddress(addr, mkPostal())).toBe(false);
     const hint = addr.nextElementSibling;
     expect(hint.className).toBe("staymo-addr-error");
     expect(hint.textContent).toBe(ADDR_HINT);
@@ -91,6 +139,7 @@ describe("isRealAddress", () => {
   });
 
   it("a later pick clears the hint", async () => {
+    stubResult(null);
     document.body.innerHTML = "<div><input></div>";
     const addr = document.querySelector("input");
     addr.value = "typed";
