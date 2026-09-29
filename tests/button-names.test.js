@@ -76,4 +76,19 @@ describe("initButtonNames", () => {
     initButtonNames();
     expect(links()[0].hasAttribute("aria-label")).toBe(false);
   });
+
+  it("names a link in a hand-built u-v3-button-* parent after the parent's text", () => {
+    document.body.innerHTML = `
+      <div class="v3-prc--pl__btn u-v3-button-grey"><div>Start with onboarding</div><a href="/estimation-fixed-price" class="v2-g--btn__link w-inline-block"></a></div>
+      <div class="v2-g--br__btn u-v3-button-violet"><a href="/start-hosting" class="v2-g--btn__link w-inline-block"></a><div>GET ESTIMATE</div></div>`;
+    initButtonNames();
+    expect(links().map((a) => a.getAttribute("aria-label"))).toEqual(["Start with onboarding", "Get Estimate"]);
+  });
+
+  it("keeps an existing aria-label in a hand-built button", () => {
+    document.body.innerHTML =
+      '<div class="calc-cta__btn u-v3-button-violet"><div>Get Estimate</div><a class="v2-g--btn__link" href="/" aria-label="Start hosting"></a></div>';
+    initButtonNames();
+    expect(links()[0].getAttribute("aria-label")).toBe("Start hosting");
+  });
 });
