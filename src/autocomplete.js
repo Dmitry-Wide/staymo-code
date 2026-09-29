@@ -5,7 +5,9 @@
    The API key is a browser key, restricted by website referrer — already public
    in page markup. Referrer restrictions only cover client-side APIs, so
    geocoding goes through google.maps.Geocoder (Maps JS API), never the
-   Geocoding REST web service. */
+   Geocoding REST web service.
+   Only a dropdown pick counts as an address: typed text is never geocoded into
+   a pass. Clicking on without a pick shows a hint under the field. */
 
 export const GOOGLE_API_KEY = "AIzaSyBCf0dHApfYxWMyEAiR3hu4EPe6-4MzgKE";
 
@@ -45,6 +47,42 @@ export async function geocode(request) {
     if (e?.code !== "ZERO_RESULTS") console.error("Geocode error:", e);
     return [];
   }
+}
+
+// --- "Choose an address from the list" hint, placed right after the input ---
+const HINT_CLASS = "staymo-addr-error";
+export const ADDR_HINT = "Choose an address from the list";
+
+function injectHintStyle(doc) {
+  if (doc.getElementById("staymo-addr-err-style")) return;
+  const s = doc.createElement("style");
+  s.id = "staymo-addr-err-style";
+  s.textContent =
+    `.${HINT_CLASS}{color:#d92d20;margin-top:.375rem;font-size:.875rem;line-height:1.4;}` +
+    `${ADDRESS_SELECTOR}.is-error{border-color:#d92d20 !important;}`;
+  doc.head.appendChild(s);
+}
+
+export function showAddrError(addressInput, msg = ADDR_HINT) {
+  if (!addressInput) return;
+  const doc = addressInput.ownerDocument;
+  injectHintStyle(doc);
+  addressInput.classList.add("is-error");
+  let hint = addressInput.nextElementSibling;
+  if (!hint || !hint.classList.contains(HINT_CLASS)) {
+    hint = doc.createElement("div");
+    hint.className = HINT_CLASS;
+    hint.setAttribute("role", "alert");
+    addressInput.insertAdjacentElement("afterend", hint);
+  }
+  hint.textContent = msg;
+}
+
+export function clearAddrError(addressInput) {
+  if (!addressInput) return;
+  addressInput.classList.remove("is-error");
+  const hint = addressInput.nextElementSibling;
+  if (hint && hint.classList.contains(HINT_CLASS)) hint.remove();
 }
 
 // Ordinal position of an element in a document-order walk of element nodes.
@@ -98,17 +136,6 @@ export function attachPlacesOnce(addressInput) {
     return;
   }
   addressInput.dataset.placesAttached = "1";
-  let hasSelectedPlace = false;
-  function runGeocodingFallback() {
-    if (postalCodeInput.value) return;
-    const placeText = addressInput.value.trim();
-    if (!placeText) return;
-    geocode({ address: placeText }).then((results) => {
-      if (!results.length) return;
-      const postal = extractPostal(results[0].address_components);
-      if (postal) postalCodeInput.value = postal;
-    });
-  }
   const autocomplete = new google.maps.places.Autocomplete(addressInput, {
     fields: ["address_components", "geometry"],
     componentRestrictions: { country: ["gb"] },
@@ -117,48 +144,49 @@ export function attachPlacesOnce(addressInput) {
     const place = autocomplete.getPlace();
     // A real dropdown pick carries geometry; pressing Enter on free text does not.
     if (!place || !place.geometry) {
-      hasSelectedPlace = false;
       addressInput.dataset.placeSelected = "";
       return;
     }
-    hasSelectedPlace = true;
     addressInput.dataset.placeSelected = "1";
+    clearAddrError(addressInput);
     const postal = extractPostal(place.address_components);
     if (postal) postalCodeInput.value = postal;
-    else runGeocodingFallback();
+    // A pick without a postcode (e.g. a street): look it up for that pick.
+    else fillPostcodeFromPick(addressInput, postalCodeInput);
   });
-  addressInput.addEventListener("focus", () => {
-    hasSelectedPlace = false;
-  });
-  // Any manual edit invalidates a previous selection (postcode refilled on blur/next).
+  // Any manual edit invalidates a previous selection and its postcode.
   addressInput.addEventListener("input", () => {
-    hasSelectedPlace = false;
     addressInput.dataset.placeSelected = "";
     postalCodeInput.value = "";
-  });
-  addressInput.addEventListener("blur", () => {
-    if (!hasSelectedPlace) runGeocodingFallback();
+    clearAddrError(addressInput);
   });
 }
 
-// True if the address is a real dropdown pick or resolves to a UK postcode.
-// Fills the postcode input as a side effect (on-demand geocode when needed).
-// Used by the funnel engine to gate the address step.
+// Postcode for a dropdown pick whose place carries none. Never makes typed text valid.
+export async function fillPostcodeFromPick(addressInput, postalInput) {
+  if (!postalInput || String(postalInput.value || "").trim()) return;
+  const text = String(addressInput.value || "").trim();
+  if (!text) return;
+  const results = await geocode({ address: text, componentRestrictions: { country: "GB" } });
+  const postal = results.length ? extractPostal(results[0].address_components) : "";
+  if (postal && addressInput.dataset.placeSelected === "1") postalInput.value = postal;
+}
+
+// True only for a real dropdown pick (or a postcode prefilled from another page's
+// pick); otherwise shows the "choose from the list" hint. For a pick without a
+// postcode it looks the postcode up first. Used by the funnel engine to gate the
+// address step.
 export async function isRealAddress(addressInput, postcodeInput) {
   if (!addressInput) return false;
   const postal = postcodeInput || findNearestPostalInput(addressInput);
-  if (addressInput.dataset.placeSelected === "1") return true;
+  if (addressInput.dataset.placeSelected === "1") {
+    await fillPostcodeFromPick(addressInput, postal);
+    clearAddrError(addressInput);
+    return true;
+  }
   if (postal && String(postal.value || "").trim()) return true;
-  const text = String(addressInput.value || "").trim();
-  if (!text) return false;
-  const results = await geocode({
-    address: text,
-    componentRestrictions: { country: "GB" },
-  });
-  if (!results.length) return false;
-  const found = extractPostal(results[0].address_components);
-  if (found && postal) postal.value = found;
-  return !!found;
+  showAddrError(addressInput);
+  return false;
 }
 
 export function initAutocomplete(doc = document) {
