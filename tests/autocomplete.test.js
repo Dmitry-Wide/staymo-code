@@ -4,6 +4,9 @@ import {
   getNodeIndex,
   findNearestPostalInput,
   isRealAddress,
+  showAddrError,
+  clearAddrError,
+  ADDR_HINT,
 } from "../src/autocomplete.js";
 
 beforeEach(() => {
@@ -39,56 +42,78 @@ describe("isRealAddress", () => {
       return { results: [{ address_components: [{ types: ["postal_code"], long_name: postal }] }] };
     });
 
-  it("true for a dropdown pick, without any geocode call", async () => {
+  it("true for a dropdown pick with a postcode, without any geocode call", async () => {
     const spy = stubGeocode("X");
-    expect(await isRealAddress(mkAddr("anything", "1"), mkPostal())).toBe(true);
+    expect(await isRealAddress(mkAddr("anything", "1"), mkPostal("SW1V 1LW"))).toBe(true);
     expect(spy).not.toHaveBeenCalled();
   });
 
-  it("true when a postcode is already filled, without geocode", async () => {
+  it("a pick without a postcode looks it up via the Maps JS Geocoder, never REST", async () => {
+    const fetchSpy = vi.fn();
+    vi.stubGlobal("fetch", fetchSpy);
+    const spy = stubGeocode("SW1V 1LW");
+    const postal = mkPostal();
+    expect(await isRealAddress(mkAddr("Wilton Road, London", "1"), postal)).toBe(true);
+    expect(postal.value).toBe("SW1V 1LW");
+    expect(spy).toHaveBeenCalledWith({
+      address: "Wilton Road, London",
+      componentRestrictions: { country: "GB" },
+    });
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("true when a postcode is prefilled (pick made on another page), without geocode", async () => {
     const spy = stubGeocode("X");
     expect(await isRealAddress(mkAddr("25 Wilton Road"), mkPostal("SW1V 1LW"))).toBe(true);
     expect(spy).not.toHaveBeenCalled();
   });
 
-  it("false for typed junk that does not geocode ('123123')", async () => {
-    stubGeocode(null);
-    expect(await isRealAddress(mkAddr("123123"), mkPostal())).toBe(false);
-  });
-
-  it("true for a valid typed address and fills the postcode input", async () => {
+  it("typed text without a pick is rejected, never geocoded, and shows the hint", async () => {
     const spy = stubGeocode("SW1V 1LW");
+    document.body.innerHTML = "<div><input><button>Next</button></div>";
+    const addr = document.querySelector("input");
+    addr.value = "25 Wilton Road London";
     const postal = mkPostal();
-    expect(await isRealAddress(mkAddr("25 Wilton Road London"), postal)).toBe(true);
-    expect(postal.value).toBe("SW1V 1LW");
-    expect(spy).toHaveBeenCalledWith({
-      address: "25 Wilton Road London",
-      componentRestrictions: { country: "GB" },
-    });
-  });
-
-  it("geocodes via the Maps JS Geocoder, never the REST web service", async () => {
-    const fetchSpy = vi.fn();
-    vi.stubGlobal("fetch", fetchSpy);
-    stubGeocode("SW1V 1LW");
-    expect(await isRealAddress(mkAddr("25 Wilton Road London"), mkPostal())).toBe(true);
-    expect(fetchSpy).not.toHaveBeenCalled();
-  });
-
-  it("false on a Geocoder failure (e.g. REQUEST_DENIED)", async () => {
-    const err = vi.spyOn(console, "error").mockImplementation(() => {});
-    stubGeocoder(async () => {
-      throw Object.assign(new Error("REQUEST_DENIED"), { code: "REQUEST_DENIED" });
-    });
-    expect(await isRealAddress(mkAddr("25 Wilton Road London"), mkPostal())).toBe(false);
-    expect(err).toHaveBeenCalled();
-    err.mockRestore();
+    expect(await isRealAddress(addr, postal)).toBe(false);
+    expect(spy).not.toHaveBeenCalled();
+    expect(postal.value).toBe("");
+    const hint = addr.nextElementSibling;
+    expect(hint.className).toBe("staymo-addr-error");
+    expect(hint.textContent).toBe(ADDR_HINT);
+    expect(hint.getAttribute("role")).toBe("alert");
+    expect(addr.classList.contains("is-error")).toBe(true);
   });
 
   it("false for empty input, without geocode", async () => {
     const spy = stubGeocode("X");
     expect(await isRealAddress(mkAddr("   "), mkPostal())).toBe(false);
     expect(spy).not.toHaveBeenCalled();
+  });
+
+  it("a later pick clears the hint", async () => {
+    document.body.innerHTML = "<div><input></div>";
+    const addr = document.querySelector("input");
+    addr.value = "typed";
+    expect(await isRealAddress(addr, mkPostal())).toBe(false);
+    addr.dataset.placeSelected = "1";
+    expect(await isRealAddress(addr, mkPostal("SW1V 1LW"))).toBe(true);
+    expect(document.querySelector(".staymo-addr-error")).toBe(null);
+    expect(addr.classList.contains("is-error")).toBe(false);
+  });
+});
+
+describe("showAddrError / clearAddrError", () => {
+  it("puts one hint right after the input, even if the input's class mentions 'input'", () => {
+    document.body.innerHTML = '<div class="hero__input__col"><input class="hero__form__input"></div>';
+    const addr = document.querySelector("input");
+    showAddrError(addr);
+    showAddrError(addr);
+    const hints = document.querySelectorAll(".staymo-addr-error");
+    expect(hints.length).toBe(1);
+    expect(addr.nextElementSibling).toBe(hints[0]);
+    expect(addr.children.length).toBe(0);
+    clearAddrError(addr);
+    expect(document.querySelector(".staymo-addr-error")).toBe(null);
   });
 });
 
@@ -197,24 +222,32 @@ describe("lazy Maps loading", () => {
     expect(Autocomplete).toHaveBeenCalledTimes(1);
   });
 
-  // Engine may validate step 1 before the lazily loaded Maps is ready.
-  it("isRealAddress waits for Maps to load, then geocodes", async () => {
-    const pending = isRealAddress(inputWith("25 Wilton Road London"), inputWith(""));
+  // A pick can come before the lazily loaded Maps is ready for the Geocoder.
+  it("a pick without a postcode waits for Maps to load, then geocodes", async () => {
+    const addr = inputWith("Wilton Road, London");
+    addr.dataset.placeSelected = "1";
+    const postal = inputWith("");
+    const pending = isRealAddress(addr, postal);
     const geocode = vi.fn(async () => ({
       results: [{ address_components: [{ types: ["postal_code"], long_name: "SW1V 1LW" }] }],
     }));
     window.google = { maps: { Geocoder: class { geocode(r) { return geocode(r); } } } };
     window.initAutocomplete();
     expect(await pending).toBe(true);
+    expect(postal.value).toBe("SW1V 1LW");
     expect(geocode).toHaveBeenCalledTimes(1);
   });
 
-  it("isRealAddress gives up (false) when Maps never loads", async () => {
+  it("a pick stays valid when Maps never loads (postcode left empty)", async () => {
     vi.useFakeTimers();
     try {
-      const pending = isRealAddress(inputWith("25 Wilton Road London"), inputWith(""));
+      const addr = inputWith("Wilton Road, London");
+      addr.dataset.placeSelected = "1";
+      const postal = inputWith("");
+      const pending = isRealAddress(addr, postal);
       await vi.advanceTimersByTimeAsync(10000);
-      expect(await pending).toBe(false);
+      expect(await pending).toBe(true);
+      expect(postal.value).toBe("");
     } finally {
       vi.useRealTimers();
     }
