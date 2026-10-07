@@ -6,6 +6,8 @@ import {
   prefillFromURL,
   injectReferrerFields,
   injectReferral,
+  initReferrerAttribution,
+  hasReferrerConsent,
 } from "../src/prelead.js";
 
 beforeEach(() => {
@@ -152,7 +154,7 @@ describe("injectReferrerFields", () => {
     document.cookie = "referrer-name=Jane";
     document.cookie = "referrer-email=jane@x.io";
     document.body.innerHTML = `<form id="f1"></form><form id="f2"></form>`;
-    injectReferrerFields();
+    injectReferrerFields(document, true);
     for (const id of ["f1", "f2"]) {
       const form = document.getElementById(id);
       expect(form.querySelector('input[name="referrer-name"]').value).toBe("Jane");
@@ -171,5 +173,42 @@ describe("injectReferral", () => {
     injectReferral();
     expect(document.getElementById("referral").value).toBe("spring");
     document.cookie = "referral=; expires=Thu, 01 Jan 1970 00:00:00 GMT";
+  });
+});
+
+describe("referrer attribution under Cookiebot consent", () => {
+  const search = "?referral-type=referred&referrer-name=Ann&referrer-email=ann%40x.com";
+  function clearCookies() {
+    for (const n of ["referrer-name", "referrer-email"]) {
+      document.cookie = `${n}=; expires=Thu, 01 Jan 1970 00:00:00 GMT`;
+      document.cookie = `${n}=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/`;
+    }
+  }
+  beforeEach(() => {
+    clearCookies();
+    delete window.Cookiebot;
+    document.body.innerHTML = "<form></form>";
+  });
+
+  it("writes no cookie and no hidden fields without consent", () => {
+    initReferrerAttribution(window, document, search);
+    expect(getCookie("referrer-name")).toBe(null);
+    expect(getCookie("referrer-email")).toBe(null);
+    expect(document.querySelector('input[name^="referrer-"]')).toBe(null);
+  });
+
+  it("writes cookies and hidden fields once consent is accepted", () => {
+    initReferrerAttribution(window, document, search);
+    window.Cookiebot = { consent: { marketing: true } };
+    window.dispatchEvent(new Event("CookiebotOnAccept"));
+    expect(getCookie("referrer-name")).toBe("Ann");
+    expect(document.querySelector('input[name="referrer-name"]').value).toBe("Ann");
+    expect(document.querySelectorAll('input[name="referrer-email"]').length).toBe(1);
+  });
+
+  it("injects nothing even with stale cookies when consent is missing", () => {
+    document.cookie = "referrer-name=Old";
+    injectReferrerFields(document, hasReferrerConsent(window));
+    expect(document.querySelector('input[name="referrer-name"]')).toBe(null);
   });
 });
