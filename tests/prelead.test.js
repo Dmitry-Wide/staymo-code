@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import {
   getURLParam,
   getCookie,
@@ -8,6 +8,7 @@ import {
   injectReferral,
   initReferrerAttribution,
   hasReferrerConsent,
+  readStoredAddress,
 } from "../src/prelead.js";
 
 beforeEach(() => {
@@ -210,5 +211,117 @@ describe("referrer attribution under Cookiebot consent", () => {
     document.cookie = "referrer-name=Old";
     injectReferrerFields(document, hasReferrerConsent(window));
     expect(document.querySelector('input[name="referrer-name"]')).toBe(null);
+  });
+});
+
+describe("prefillFromURL: address handoff without beds", () => {
+  const NOW = 1_800_000_000_000;
+  function memStore(entry) {
+    const data = {};
+    if (entry) data.staymo_address = JSON.stringify(entry);
+    return { getItem: (k) => (k in data ? data[k] : null), setItem: (k, v) => (data[k] = String(v)) };
+  }
+  function fixture() {
+    document.body.innerHTML = `
+      <form data-form-type="start-host">
+        <input data-input-id="address-search">
+        <input data-input-id="postal-code-result">
+        <div data-rooms>
+          <div data-room="1" tabindex="0">1</div>
+          <div data-room="2" tabindex="0" class="is-bed-selected">2</div>
+          <div data-room="3" tabindex="0">3</div>
+          <input type="hidden" data-rooms-input value="2">
+        </div>
+        <button type="button" data-addr-change hidden>Change</button>
+      </form>
+      <button start-start-button></button>`;
+  }
+  const $ = (s) => document.querySelector(s);
+  let clicked;
+  beforeEach(() => {
+    vi.useFakeTimers();
+    fixture();
+    clicked = vi.fn();
+    $("[start-start-button]").addEventListener("click", clicked);
+  });
+  afterEach(() => {
+    vi.runAllTimers();
+    expect(clicked).not.toHaveBeenCalled();
+    vi.useRealTimers();
+  });
+
+  it("postal-code only, no storage → the postcode doubles as the address", () => {
+    expect(prefillFromURL(document, "?postal-code=SW1V+1AA", memStore(), NOW)).toBe(true);
+    expect($('[data-input-id="address-search"]').value).toBe("SW1V 1AA");
+    expect($('[data-input-id="postal-code-result"]').value).toBe("SW1V 1AA");
+    expect($('[data-input-id="address-search"]').dataset.placeSelected).toBe("1");
+    expect($("[data-addr-change]").hasAttribute("hidden")).toBe(false);
+  });
+
+  it("uses the stored address and beds when the stored postcode matches", () => {
+    const store = memStore({ address: "1 Rose St, London", postal: "SW1V 1AA", beds: "3", ts: NOW - 1000 });
+    prefillFromURL(document, "?postal-code=sw1v1aa&sourcepath=%2F", store, NOW);
+    expect($('[data-input-id="address-search"]').value).toBe("1 Rose St, London");
+    expect($('[data-room="3"]').classList.contains("is-bed-selected")).toBe(true);
+    expect($("[data-rooms-input]").value).toBe("3");
+    expect(document.activeElement).toBe($('[data-room="3"]'));
+  });
+
+  it("ignores a stored entry for another postcode", () => {
+    const store = memStore({ address: "1 Rose St", postal: "E14 1AA", beds: "3", ts: NOW - 1000 });
+    prefillFromURL(document, "?postal-code=SW1V+1AA", store, NOW);
+    expect($('[data-input-id="address-search"]').value).toBe("SW1V 1AA");
+    expect($("[data-rooms-input]").value).toBe("2");
+  });
+
+  it("prefers the URL address over storage", () => {
+    const store = memStore({ address: "Stored", postal: "SW1V 1AA", ts: NOW - 1000 });
+    prefillFromURL(document, "?postal-code=SW1V+1AA&address=From+URL", store, NOW);
+    expect($('[data-input-id="address-search"]').value).toBe("From URL");
+  });
+
+  it("no params + fresh stored entry → the same prefill", () => {
+    const store = memStore({ address: "1 Rose St", postal: "E14 1AA", ts: NOW - 1000 });
+    expect(prefillFromURL(document, "", store, NOW)).toBe(true);
+    expect($('[data-input-id="address-search"]').value).toBe("1 Rose St");
+    expect($('[data-input-id="postal-code-result"]').value).toBe("E14 1AA");
+    expect(document.activeElement).toBe($('[data-room="2"]'));
+  });
+
+  it("no params + stale or broken storage → nothing", () => {
+    expect(prefillFromURL(document, "", memStore({ address: "a", postal: "E14", ts: NOW - 31 * 60 * 1000 }), NOW)).toBe(false);
+    const broken = { getItem: () => "{oops" };
+    expect(prefillFromURL(document, "", broken, NOW)).toBe(false);
+    const throwing = { getItem: () => { throw new Error("denied"); } };
+    expect(prefillFromURL(document, "", throwing, NOW)).toBe(false);
+    expect($('[data-input-id="address-search"]').value).toBe("");
+    expect($("[data-addr-change]").hasAttribute("hidden")).toBe(true);
+  });
+
+  it("[data-addr-change] clears the address and focuses the field", () => {
+    prefillFromURL(document, "?postal-code=SW1V+1AA", memStore(), NOW);
+    $("[data-addr-change]").click();
+    const input = $('[data-input-id="address-search"]');
+    expect(input.value).toBe("");
+    expect($('[data-input-id="postal-code-result"]').value).toBe("");
+    expect(input.dataset.placeSelected).toBeUndefined();
+    expect(document.activeElement).toBe(input);
+  });
+
+  it("does not focus a tile that isn't focusable", () => {
+    $('[data-room="2"]').removeAttribute("tabindex");
+    prefillFromURL(document, "?postal-code=SW1V+1AA", memStore(), NOW);
+    expect(document.activeElement).not.toBe($('[data-room="2"]'));
+  });
+});
+
+describe("readStoredAddress", () => {
+  it("returns a fresh entry, null for stale/future/incomplete ones", () => {
+    const at = (entry) => ({ getItem: () => JSON.stringify(entry) });
+    expect(readStoredAddress(at({ address: "a", postal: "p", ts: 1000 }), 2000)).toMatchObject({ address: "a" });
+    expect(readStoredAddress(at({ address: "a", postal: "p", ts: 0 }), 30 * 60 * 1000)).toBe(null);
+    expect(readStoredAddress(at({ address: "a", postal: "p", ts: 5000 }), 2000)).toBe(null);
+    expect(readStoredAddress(at({ address: "a", ts: 1000 }), 2000)).toBe(null);
+    expect(readStoredAddress(null)).toBe(null);
   });
 });
