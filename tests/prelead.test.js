@@ -9,6 +9,7 @@ import {
   initReferrerAttribution,
   hasReferrerConsent,
   readStoredAddress,
+  initAddressClear,
 } from "../src/prelead.js";
 
 beforeEach(() => {
@@ -229,7 +230,10 @@ describe("prefillFromURL: address handoff without beds", () => {
   function fixture() {
     document.body.innerHTML = `
       <form data-form-type="start-host">
-        <input data-input-id="address-search">
+        <div class="est__field">
+          <input data-input-id="address-search">
+          <button type="button" data-addr-change aria-label="Clear address">×</button>
+        </div>
         <input data-input-id="postal-code-result">
         <div data-rooms>
           <div data-room="1" tabindex="0">1</div>
@@ -237,7 +241,6 @@ describe("prefillFromURL: address handoff without beds", () => {
           <div data-room="3" tabindex="0">3</div>
           <input type="hidden" data-rooms-input value="2">
         </div>
-        <button type="button" data-addr-change hidden>Change</button>
       </form>
       <button start-start-button></button>`;
   }
@@ -260,7 +263,6 @@ describe("prefillFromURL: address handoff without beds", () => {
     expect($('[data-input-id="address-search"]').value).toBe("SW1V 1AA");
     expect($('[data-input-id="postal-code-result"]').value).toBe("SW1V 1AA");
     expect($('[data-input-id="address-search"]').dataset.placeSelected).toBe("1");
-    expect($("[data-addr-change]").hasAttribute("hidden")).toBe(false);
   });
 
   it("uses the stored address and beds when the stored postcode matches", () => {
@@ -293,15 +295,6 @@ describe("prefillFromURL: address handoff without beds", () => {
     expect(document.activeElement).toBe($('[data-room="2"]'));
   });
 
-  it("Change clears the fields and the stored address", () => {
-    const store = memStore({ address: "1 Rose St", postal: "E14 1AA", ts: NOW - 1000 });
-    prefillFromURL(document, "", store, NOW);
-    $("[data-addr-change]").click();
-    expect($('[data-input-id="address-search"]').value).toBe("");
-    expect($('[data-input-id="postal-code-result"]').value).toBe("");
-    expect(store.data.staymo_address).toBeUndefined();
-  });
-
   it("no params + stale or broken storage → nothing", () => {
     expect(prefillFromURL(document, "", memStore({ address: "a", postal: "E14", ts: NOW - 31 * 60 * 1000 }), NOW)).toBe(false);
     const broken = { getItem: () => "{oops" };
@@ -309,23 +302,88 @@ describe("prefillFromURL: address handoff without beds", () => {
     const throwing = { getItem: () => { throw new Error("denied"); } };
     expect(prefillFromURL(document, "", throwing, NOW)).toBe(false);
     expect($('[data-input-id="address-search"]').value).toBe("");
-    expect($("[data-addr-change]").hasAttribute("hidden")).toBe(true);
-  });
-
-  it("[data-addr-change] clears the address and focuses the field", () => {
-    prefillFromURL(document, "?postal-code=SW1V+1AA", memStore(), NOW);
-    $("[data-addr-change]").click();
-    const input = $('[data-input-id="address-search"]');
-    expect(input.value).toBe("");
-    expect($('[data-input-id="postal-code-result"]').value).toBe("");
-    expect(input.dataset.placeSelected).toBeUndefined();
-    expect(document.activeElement).toBe(input);
   });
 
   it("does not focus a tile that isn't focusable", () => {
     $('[data-room="2"]').removeAttribute("tabindex");
     prefillFromURL(document, "?postal-code=SW1V+1AA", memStore(), NOW);
     expect(document.activeElement).not.toBe($('[data-room="2"]'));
+  });
+});
+
+describe("initAddressClear", () => {
+  const NOW = Date.now();
+  function memStore(entry) {
+    const data = {};
+    if (entry) data.staymo_address = JSON.stringify(entry);
+    return {
+      data,
+      getItem: (k) => (k in data ? data[k] : null),
+      setItem: (k, v) => (data[k] = String(v)),
+      removeItem: vi.fn((k) => delete data[k]),
+    };
+  }
+  const $ = (s) => document.querySelector(s);
+  beforeEach(() => {
+    document.body.innerHTML = `
+      <form data-form-type="start-host">
+        <div class="est__field">
+          <input data-input-id="address-search">
+          <button type="button" data-addr-change aria-label="Clear address">×</button>
+        </div>
+        <input data-input-id="postal-code-result">
+      </form>`;
+  });
+
+  it("clears a typed address without any prefill", () => {
+    const store = memStore({ address: "1 Rose St", postal: "E14 1AA", ts: NOW - 1000 });
+    const win = { staymoClearAddrError: vi.fn() };
+    initAddressClear(document, store, win);
+    const input = $('[data-input-id="address-search"]');
+    input.value = "2 Elm Rd";
+    input.dataset.placeSelected = "1";
+    $('[data-input-id="postal-code-result"]').value = "E14 9GP";
+    $("[data-addr-change]").click();
+    expect(input.value).toBe("");
+    expect($('[data-input-id="postal-code-result"]').value).toBe("");
+    expect(input.dataset.placeSelected).toBeUndefined();
+    expect(store.data.staymo_address).toBeUndefined();
+    expect(win.staymoClearAddrError).toHaveBeenCalledWith(input);
+    expect(document.activeElement).toBe(input);
+  });
+
+  it("still works after a prefill, with one handler per button", () => {
+    const store = memStore({ address: "1 Rose St", postal: "E14 1AA", ts: NOW - 1000 });
+    initAddressClear(document, store, {});
+    expect(prefillFromURL(document, "", store, NOW)).toBe(true);
+    initAddressClear(document, store, {}); // a second init must not double-bind
+    expect($('[data-input-id="address-search"]').value).toBe("1 Rose St");
+    $("[data-addr-change]").click();
+    expect($('[data-input-id="address-search"]').value).toBe("");
+    expect($('[data-input-id="postal-code-result"]').value).toBe("");
+    expect(store.removeItem).toHaveBeenCalledTimes(1);
+    expect(store.data.staymo_address).toBeUndefined();
+  });
+
+  it("mousedown keeps focus in the field", () => {
+    initAddressClear(document, memStore(), {});
+    const ev = new MouseEvent("mousedown", { bubbles: true, cancelable: true });
+    $("[data-addr-change]").dispatchEvent(ev);
+    expect(ev.defaultPrevented).toBe(true);
+  });
+
+  it("works with sessionStorage null or throwing, and without the form", () => {
+    initAddressClear(document, null, {});
+    $('[data-input-id="address-search"]').value = "x";
+    expect(() => $("[data-addr-change]").click()).not.toThrow();
+    expect($('[data-input-id="address-search"]').value).toBe("");
+    document.body.innerHTML = $("form").outerHTML;
+    initAddressClear(document, { removeItem: () => { throw new Error("denied"); } }, {});
+    $('[data-input-id="address-search"]').value = "x";
+    expect(() => $("[data-addr-change]").click()).not.toThrow();
+    expect($('[data-input-id="address-search"]').value).toBe("");
+    document.body.innerHTML = `<button data-addr-change></button>`;
+    expect(() => initAddressClear(document, null, {})).not.toThrow();
   });
 });
 
