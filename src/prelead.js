@@ -4,7 +4,10 @@
      start-host form and auto-click Start.
    - Address handoff (header-address.js): ?postal-code without beds, or no params
      but a fresh sessionStorage "staymo_address", prefills the address step
-     without auto-clicking; [data-addr-change] lets the visitor clear it.
+     without auto-clicking.
+   - Address clear: button[data-addr-change] (the × inside the step-0 address
+     field; CSS hides it while the field is empty) clears the address, postcode
+     and sessionStorage "staymo_address" — wired on every load, prefill or not.
    - Referrer attribution: ?referral-type=referred stores referrer-name/email
      cookies and injects them as hidden fields into every form — only after
      Cookiebot marketing consent (personal data of the referrer). Before
@@ -98,7 +101,7 @@ const samePostcode = (a, b) =>
 
 // Fill address + postcode (+ beds) on step 0 without starting; the visitor
 // confirms bedrooms. Returns true when something was filled.
-function prefillAddressStep(doc, form, { address, postalCode, beds }, storage = sessionStore()) {
+function prefillAddressStep(doc, form, { address, postalCode, beds }) {
   const addressInput = form.querySelector('[data-input-id="address-search"]');
   const postalCodeInput = form.querySelector('[data-input-id="postal-code-result"]');
   if (addressInput) {
@@ -117,8 +120,26 @@ function prefillAddressStep(doc, form, { address, postalCode, beds }, storage = 
     tile.focus({ preventScroll: true });
   }
 
+  return true;
+}
+
+// --- Address clear (×) on step 0 ---
+const clearBound = new WeakSet();
+
+export function initAddressClear(
+  doc = document,
+  storage = sessionStore(),
+  win = typeof window !== "undefined" ? window : undefined
+) {
   doc.querySelectorAll("[data-addr-change]").forEach((btn) => {
-    btn.removeAttribute("hidden");
+    if (clearBound.has(btn)) return;
+    const form = btn.closest('[data-form-type="start-host"]') || doc.querySelector('[data-form-type="start-host"]');
+    if (!form) return;
+    clearBound.add(btn);
+    const addressInput = form.querySelector('[data-input-id="address-search"]');
+    const postalCodeInput = form.querySelector('[data-input-id="postal-code-result"]');
+    // Keep focus in the field so it doesn't blur-validate before the click.
+    btn.addEventListener("mousedown", (e) => e.preventDefault());
     btn.addEventListener("click", (e) => {
       e.preventDefault();
       // Otherwise the header (header-address.js) prefills the old address again.
@@ -129,11 +150,11 @@ function prefillAddressStep(doc, form, { address, postalCode, beds }, storage = 
       if (addressInput) {
         addressInput.value = "";
         delete addressInput.dataset.placeSelected;
+        if (win && typeof win.staymoClearAddrError === "function") win.staymoClearAddrError(addressInput);
         addressInput.focus();
       }
     });
   });
-  return true;
 }
 
 // --- Form Initializer: URL → prefill + auto-click Start ---
@@ -151,10 +172,10 @@ export function prefillFromURL(doc = document, search = currentSearch(), storage
         address: address || (match ? match.address : postalCode),
         postalCode,
         beds: match ? match.beds : undefined,
-      }, storage);
+      });
     }
     if (!address && !postalCode && !beds && stored) {
-      return prefillAddressStep(doc, form, { address: stored.address, postalCode: stored.postal, beds: stored.beds }, storage);
+      return prefillAddressStep(doc, form, { address: stored.address, postalCode: stored.postal, beds: stored.beds });
     }
     return false;
   }
@@ -235,6 +256,7 @@ if (typeof window !== "undefined") {
   // Capture the referral cookie ASAP (matches the original IIFE timing).
   captureReferral();
   window.addEventListener("DOMContentLoaded", () => {
+    initAddressClear();
     prefillFromURL();
     initReferrerAttribution();
     injectReferral();
