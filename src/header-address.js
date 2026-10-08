@@ -92,8 +92,8 @@ export function decideMode({ y, past, mode, anchor, locked, hysteresis = SCROLL_
   let next;
   if (!past) next = { mode: "nav", anchor: null };
   else if (anchor === null || anchor === undefined) next = { mode: "addr", anchor: y };
-  else if (y > anchor + hysteresis) next = { mode: "addr", anchor: y };
-  else if (y < anchor - hysteresis) next = { mode: "nav", anchor: y };
+  else if (y >= anchor + hysteresis) next = { mode: "addr", anchor: y };
+  else if (y <= anchor - hysteresis) next = { mode: "nav", anchor: y };
   else {
     // Keep the anchor at the turning point of the current direction.
     const a = mode === "addr" ? Math.max(anchor, y) : Math.min(anchor, y);
@@ -175,7 +175,7 @@ function isVisible(el) {
 }
 
 export function initHeaderAddress(win = window, doc = document) {
-  const root = doc.querySelector("[data-hdr-addr]");
+  const root = doc.querySelector('[data-hdr-addr][data-form-type="header-address"]');
   if (!root) return null;
   const input = root.querySelector(ADDRESS_SELECTOR);
   if (!input) return null;
@@ -245,6 +245,7 @@ export function initHeaderAddress(win = window, doc = document) {
   };
 
   setMode("nav");
+  schedule(); // page restored mid-scroll
   win.addEventListener("scroll", schedule, { passive: true });
   win.addEventListener("resize", () => {
     hero = pickHero();
@@ -273,6 +274,7 @@ export function initHeaderAddress(win = window, doc = document) {
     schedule();
   };
 
+  root.addEventListener("focusin", () => clearTimeout(blurTimer));
   input.addEventListener("focus", () => {
     clearTimeout(blurTimer);
     focused = true;
@@ -285,7 +287,8 @@ export function initHeaderAddress(win = window, doc = document) {
     if (!input.value.trim()) openMenu();
   });
 
-  input.addEventListener("blur", () => {
+  // Focus leaving the root (from the field or the geo button).
+  root.addEventListener("focusout", () => {
     clearTimeout(blurTimer);
     // Delay so a click on the geo button / a Google suggestion lands first.
     blurTimer = setTimeout(() => {

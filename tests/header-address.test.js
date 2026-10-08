@@ -78,12 +78,14 @@ describe("pure helpers", () => {
       expect(s).toEqual({ mode: "addr", anchor: 905 });
       s = decideMode({ y: 899, past: true, ...s });
       expect(s.mode).toBe("addr");
-      s = decideMode({ y: 896, past: true, ...s });
-      expect(s).toEqual({ mode: "nav", anchor: 896 });
+      s = decideMode({ y: 897, past: true, ...s });
+      expect(s).toEqual({ mode: "nav", anchor: 897 });
       s = decideMode({ y: 880, past: true, ...s });
       expect(s).toEqual({ mode: "nav", anchor: 880 });
-      s = decideMode({ y: 889, past: true, ...s });
-      expect(s).toEqual({ mode: "addr", anchor: 889 });
+      s = decideMode({ y: 887, past: true, ...s });
+      expect(s.mode).toBe("nav");
+      s = decideMode({ y: 888, past: true, ...s });
+      expect(s).toEqual({ mode: "addr", anchor: 888 });
     });
     it("never leaves addr while locked", () => {
       expect(decideMode({ y: 100, past: true, mode: "addr", anchor: 900, locked: true }).mode).toBe("addr");
@@ -259,6 +261,23 @@ describe("initHeaderAddress", () => {
     input.blur();
     vi.advanceTimersByTime(250);
     expect(document.documentElement.hasAttribute("data-hdr-addr-focus")).toBe(false);
+  });
+
+  it("releases focus state when focus leaves via the geo button", () => {
+    setup();
+    win.scrollY = 900;
+    win.fire("scroll");
+    input.focus();
+    $("[data-hdr-addr-geo]").focus();
+    vi.advanceTimersByTime(250);
+    expect(document.documentElement.hasAttribute("data-hdr-addr-focus")).toBe(true);
+    $("#go").focus();
+    vi.advanceTimersByTime(250);
+    expect(document.documentElement.hasAttribute("data-hdr-addr-focus")).toBe(false);
+    expect(root.hasAttribute("data-menu")).toBe(false);
+    win.scrollY = 300;
+    win.fire("scroll");
+    expect(bar.dataset.hdrMode).toBe("nav");
   });
 
   it("no menu without geolocation", () => {
