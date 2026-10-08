@@ -20,6 +20,7 @@ function memStore(initial = {}) {
     data,
     getItem: (k) => (k in data ? data[k] : null),
     setItem: (k, v) => (data[k] = String(v)),
+    removeItem: (k) => delete data[k],
   };
 }
 
@@ -136,11 +137,13 @@ describe("initHeaderAddress", () => {
   let store, win, input, postal, root, bar, assign;
   const $ = (s) => document.querySelector(s);
 
-  function setup({ hero = false, storage = memStore(), mobile = false, geo } = {}) {
+  function setup({ hero = false, storage = memStore(), mobile = false, geo, clear = false } = {}) {
     document.body.innerHTML = `
       <div class="hdr" data-hdr-bar>
         <div data-hdr-addr data-form-type="header-address">
-          <input data-input-id="address-search">
+          <div class="hdr__addr__field"><input data-input-id="address-search">${
+            clear ? `<button type="button" data-hdr-addr-clear aria-label="Clear address">×</button>` : ""
+          }</div>
           <input type="hidden" data-input-id="postal-code-result">
           <div data-hdr-addr-menu><button data-hdr-addr-geo>Use my current location</button></div>
         </div>
@@ -421,6 +424,76 @@ describe("initHeaderAddress", () => {
       $("#go").click();
       await vi.advanceTimersByTimeAsync(0);
       expect(JSON.parse(store.data.staymo_address).beds).toBe("3");
+    });
+  });
+
+  describe("clear button", () => {
+    const entry = () =>
+      memStore({ staymo_address: JSON.stringify({ address: "1 Rose St", postal: "SW1V 1AA", ts: Date.now() - 1000 }) });
+
+    it("empties the field, postcode and storage, refocuses and opens the menu", async () => {
+      setup({ storage: entry(), clear: true });
+      win.staymoClearAddrError = vi.fn();
+      expect(input.value).toBe("1 Rose St");
+      input.focus(); // already focused: no new focus event on clear
+      expect(root.hasAttribute("data-menu")).toBe(false);
+      $("[data-hdr-addr-clear]").click();
+      expect(input.value).toBe("");
+      expect(postal.value).toBe("");
+      expect(input.dataset.placeSelected).toBeUndefined();
+      expect(store.data.staymo_address).toBeUndefined();
+      expect(win.staymoClearAddrError).toHaveBeenCalledWith(input);
+      expect(document.activeElement).toBe(input);
+      expect(root.dataset.menu).toBe("open");
+      expect(win.dataLayer).toContainEqual({ event: "header_address_clear" });
+      await vi.advanceTimersByTimeAsync(500);
+      expect(assign).not.toHaveBeenCalled();
+    });
+
+    it("mousedown keeps focus in the field", () => {
+      setup({ clear: true });
+      const ev = new MouseEvent("mousedown", { bubbles: true, cancelable: true });
+      $("[data-hdr-addr-clear]").dispatchEvent(ev);
+      expect(ev.defaultPrevented).toBe(true);
+    });
+
+    it("a later submit reports typed / pick, not stored", async () => {
+      setup({ storage: entry(), clear: true });
+      win.staymoValidateAddress = vi.fn(async () => true);
+      $("[data-hdr-addr-clear]").click();
+      input.value = "1 Rose St"; // same text as the old fill
+      postal.value = "SW1V 1AA";
+      $("#go").click();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(win.dataLayer.find((e) => e.event === "header_address_submit").method).toBe("typed");
+
+      setup({ storage: entry(), clear: true });
+      win.staymoValidateAddress = vi.fn(async () => true);
+      $("[data-hdr-addr-clear]").click();
+      input.value = "2 Elm Rd";
+      postal.value = "E14 9GP";
+      input.dataset.placeSelected = "1";
+      $("#go").click();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(win.dataLayer.find((e) => e.event === "header_address_submit").method).toBe("pick");
+    });
+
+    it("works with sessionStorage null or throwing", () => {
+      setup({ storage: null, clear: true });
+      input.value = "x";
+      expect(() => $("[data-hdr-addr-clear]").click()).not.toThrow();
+      expect(input.value).toBe("");
+      const bad = { getItem: () => null, setItem: () => {}, removeItem: () => { throw new Error("x"); } };
+      setup({ storage: bad, clear: true });
+      input.value = "x";
+      expect(() => $("[data-hdr-addr-clear]").click()).not.toThrow();
+      expect(win.dataLayer).toContainEqual({ event: "header_address_clear" });
+    });
+
+    it("module works without the button", () => {
+      setup({ storage: entry() });
+      expect($("[data-hdr-addr-clear]")).toBe(null);
+      expect(input.value).toBe("1 Rose St");
     });
   });
 

@@ -98,7 +98,7 @@ const samePostcode = (a, b) =>
 
 // Fill address + postcode (+ beds) on step 0 without starting; the visitor
 // confirms bedrooms. Returns true when something was filled.
-function prefillAddressStep(doc, form, { address, postalCode, beds }) {
+function prefillAddressStep(doc, form, { address, postalCode, beds }, storage = sessionStore()) {
   const addressInput = form.querySelector('[data-input-id="address-search"]');
   const postalCodeInput = form.querySelector('[data-input-id="postal-code-result"]');
   if (addressInput) {
@@ -121,6 +121,10 @@ function prefillAddressStep(doc, form, { address, postalCode, beds }) {
     btn.removeAttribute("hidden");
     btn.addEventListener("click", (e) => {
       e.preventDefault();
+      // Otherwise the header (header-address.js) prefills the old address again.
+      try {
+        if (storage) storage.removeItem(STORED_ADDRESS_KEY);
+      } catch (err) {}
       if (postalCodeInput) postalCodeInput.value = "";
       if (addressInput) {
         addressInput.value = "";
@@ -147,10 +151,10 @@ export function prefillFromURL(doc = document, search = currentSearch(), storage
         address: address || (match ? match.address : postalCode),
         postalCode,
         beds: match ? match.beds : undefined,
-      });
+      }, storage);
     }
     if (!address && !postalCode && !beds && stored) {
-      return prefillAddressStep(doc, form, { address: stored.address, postalCode: stored.postal, beds: stored.beds });
+      return prefillAddressStep(doc, form, { address: stored.address, postalCode: stored.postal, beds: stored.beds }, storage);
     }
     return false;
   }

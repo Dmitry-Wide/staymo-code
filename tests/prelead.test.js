@@ -219,7 +219,12 @@ describe("prefillFromURL: address handoff without beds", () => {
   function memStore(entry) {
     const data = {};
     if (entry) data.staymo_address = JSON.stringify(entry);
-    return { getItem: (k) => (k in data ? data[k] : null), setItem: (k, v) => (data[k] = String(v)) };
+    return {
+      data,
+      getItem: (k) => (k in data ? data[k] : null),
+      setItem: (k, v) => (data[k] = String(v)),
+      removeItem: (k) => delete data[k],
+    };
   }
   function fixture() {
     document.body.innerHTML = `
@@ -286,6 +291,15 @@ describe("prefillFromURL: address handoff without beds", () => {
     expect($('[data-input-id="address-search"]').value).toBe("1 Rose St");
     expect($('[data-input-id="postal-code-result"]').value).toBe("E14 1AA");
     expect(document.activeElement).toBe($('[data-room="2"]'));
+  });
+
+  it("Change clears the fields and the stored address", () => {
+    const store = memStore({ address: "1 Rose St", postal: "E14 1AA", ts: NOW - 1000 });
+    prefillFromURL(document, "", store, NOW);
+    $("[data-addr-change]").click();
+    expect($('[data-input-id="address-search"]').value).toBe("");
+    expect($('[data-input-id="postal-code-result"]').value).toBe("");
+    expect(store.data.staymo_address).toBeUndefined();
   });
 
   it("no params + stale or broken storage → nothing", () => {

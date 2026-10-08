@@ -5,11 +5,15 @@
      [data-input-id="address-search"], hidden [data-input-id="postal-code-result"],
      [data-hdr-addr-menu] and button[data-hdr-addr-geo]. Gets data-menu="open"
      and data-geo="loading".
+   - button[data-hdr-addr-clear] (optional, inside .hdr__addr__field) — empties the
+     field, the postcode and sessionStorage; CSS hides it while the field is empty.
    - [data-hdr-addr-submit] — wraps the header's Get Started link.
    Google Places, validation and error hints come from the site-wide inline code:
    window.staymoValidateAddress / staymoShowAddrError / staymoClearAddrError.
    Mode: "addr" once the hero form (or, without one, the first screen) is scrolled
    past, "nav" when scrolling back up; never leaves "addr" while the field is in use.
+   dataLayer: header_address_focus, header_address_geo, header_address_submit,
+   header_address_clear.
    A valid address goes to /start-hosting?postal-code=… (no address in the URL —
    the address itself travels through sessionStorage "staymo_address").
    No-op on pages without the root. */
@@ -182,6 +186,7 @@ export function initHeaderAddress(win = window, doc = document) {
   const postalInput = root.querySelector(POSTAL_SELECTOR);
   const menu = root.querySelector("[data-hdr-addr-menu]");
   const geoButton = root.querySelector("[data-hdr-addr-geo]");
+  const clearButton = root.querySelector("[data-hdr-addr-clear]");
   const bar = root.closest("[data-hdr-bar]") || doc.querySelector("[data-hdr-bar]");
   const html = doc.documentElement;
   const storage = (() => {
@@ -374,6 +379,25 @@ export function initHeaderAddress(win = window, doc = document) {
     geoButton.addEventListener("click", (e) => {
       e.preventDefault();
       useLocation();
+    });
+  }
+
+  // --- Clear ---
+  if (clearButton) {
+    clearButton.addEventListener("mousedown", (e) => e.preventDefault());
+    clearButton.addEventListener("click", (e) => {
+      e.preventDefault();
+      input.value = "";
+      if (postalInput) postalInput.value = "";
+      delete input.dataset.placeSelected;
+      fill = null;
+      try {
+        storage?.removeItem(STORAGE_KEY);
+      } catch (err) {}
+      if (typeof win.staymoClearAddrError === "function") win.staymoClearAddrError(input);
+      input.focus();
+      openMenu(); // no focus event when the field already had focus
+      dataLayer.push({ event: "header_address_clear" });
     });
   }
 
