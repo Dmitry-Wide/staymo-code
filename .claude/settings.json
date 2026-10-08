@@ -3,7 +3,7 @@
   "hooks": {
     "PreToolUse": [
       {
-        "matcher": "Bash|Monitor",
+        "matcher": "Bash|Monitor|mcp__.*__merge_pull_request|mcp__.*__enable_pr_auto_merge",
         "hooks": [
           {
             "type": "command",
@@ -39,8 +39,9 @@
       "mcp__plugin_context7_context7"
     ],
     "deny": [
-      "mcp__github__merge_pull_request",
-      "mcp__github__enable_pr_auto_merge"
+      "mcp__github__enable_pr_auto_merge",
+      "mcp__GitHub__enable_pr_auto_merge",
+      "mcp__claude_ai_GitHub__enable_pr_auto_merge"
     ]
   }
 }
