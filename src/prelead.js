@@ -2,6 +2,9 @@
    Consolidates three inline embeds, ported 1:1:
    - Form Initializer: URL params (address / postal-code / beds) prefill the
      start-host form and auto-click Start.
+   - Address handoff (header-address.js): ?postal-code without beds, or no params
+     but a fresh sessionStorage "staymo_address", prefills the address step
+     without auto-clicking; [data-addr-change] lets the visitor clear it.
    - Referrer attribution: ?referral-type=referred stores referrer-name/email
      cookies and injects them as hidden fields into every form — only after
      Cookiebot marketing consent (personal data of the referrer). Before
@@ -64,14 +67,93 @@ export function applyBedsToTiles(doc, beds) {
   return true;
 }
 
+// --- Address handoff: sessionStorage written by header-address.js ---
+// Same key/format as header-address.js (duplicated: modules don't import each other).
+export const STORED_ADDRESS_KEY = "staymo_address";
+const STORED_ADDRESS_TTL_MS = 30 * 60 * 1000;
+
+function sessionStore() {
+  try {
+    return typeof window !== "undefined" ? window.sessionStorage : null;
+  } catch (e) {
+    return null;
+  }
+}
+
+export function readStoredAddress(storage = sessionStore(), now = Date.now()) {
+  try {
+    const raw = storage && storage.getItem(STORED_ADDRESS_KEY);
+    if (!raw) return null;
+    const entry = JSON.parse(raw);
+    if (!entry || !entry.address || !entry.postal) return null;
+    const age = now - Number(entry.ts);
+    return age >= 0 && age < STORED_ADDRESS_TTL_MS ? entry : null;
+  } catch (e) {
+    return null;
+  }
+}
+
+const samePostcode = (a, b) =>
+  String(a || "").replace(/\s+/g, "").toUpperCase() === String(b || "").replace(/\s+/g, "").toUpperCase();
+
+// Fill address + postcode (+ beds) on step 0 without starting; the visitor
+// confirms bedrooms. Returns true when something was filled.
+function prefillAddressStep(doc, form, { address, postalCode, beds }) {
+  const addressInput = form.querySelector('[data-input-id="address-search"]');
+  const postalCodeInput = form.querySelector('[data-input-id="postal-code-result"]');
+  if (addressInput) {
+    addressInput.value = address;
+    addressInput.dataset.placeSelected = "1";
+  }
+  if (postalCodeInput) postalCodeInput.value = postalCode;
+  if (beds !== undefined && beds !== null && beds !== "") {
+    const bedsInput = form.querySelector('[data-input-id="beds-count"]');
+    if (bedsInput) bedsInput.value = beds;
+    else applyBedsToTiles(form, beds);
+  }
+
+  const tile = form.querySelector("[data-rooms] [data-room].is-bed-selected");
+  if (tile && tile.matches('a[href], button, input, select, textarea, [tabindex]:not([tabindex="-1"])')) {
+    tile.focus({ preventScroll: true });
+  }
+
+  doc.querySelectorAll("[data-addr-change]").forEach((btn) => {
+    btn.removeAttribute("hidden");
+    btn.addEventListener("click", (e) => {
+      e.preventDefault();
+      if (postalCodeInput) postalCodeInput.value = "";
+      if (addressInput) {
+        addressInput.value = "";
+        delete addressInput.dataset.placeSelected;
+        addressInput.focus();
+      }
+    });
+  });
+  return true;
+}
+
 // --- Form Initializer: URL → prefill + auto-click Start ---
-export function prefillFromURL(doc = document, search = currentSearch()) {
+export function prefillFromURL(doc = document, search = currentSearch(), storage = sessionStore(), now = Date.now()) {
   const form = doc.querySelector('[data-form-type="start-host"]');
   if (!form) return false;
   const address = getURLParam("address", search);
   const postalCode = getURLParam("postal-code", search);
   const beds = getURLParam("beds", search);
-  if (!(address && postalCode && beds)) return false;
+  if (!(address && postalCode && beds)) {
+    const stored = readStoredAddress(storage, now);
+    if (postalCode && !beds) {
+      const match = stored && samePostcode(stored.postal, postalCode) ? stored : null;
+      return prefillAddressStep(doc, form, {
+        address: address || (match ? match.address : postalCode),
+        postalCode,
+        beds: match ? match.beds : undefined,
+      });
+    }
+    if (!address && !postalCode && !beds && stored) {
+      return prefillAddressStep(doc, form, { address: stored.address, postalCode: stored.postal, beds: stored.beds });
+    }
+    return false;
+  }
   const addressInput = form.querySelector('[data-input-id="address-search"]');
   const postalCodeInput = form.querySelector('[data-input-id="postal-code-result"]');
   const bedsInput = form.querySelector('[data-input-id="beds-count"]');
