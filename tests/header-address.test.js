@@ -137,7 +137,7 @@ describe("initHeaderAddress", () => {
   let store, win, input, postal, root, bar, assign;
   const $ = (s) => document.querySelector(s);
 
-  function setup({ hero = false, storage = memStore(), mobile = false, geo, clear = false, hidden = false } = {}) {
+  function setup({ hero = false, storage = memStore(), geo, clear = false, hidden = false } = {}) {
     document.body.innerHTML = `
       <div class="hdr" data-hdr-bar>
         <div data-hdr-addr data-form-type="header-address">
@@ -164,7 +164,7 @@ describe("initHeaderAddress", () => {
       dataLayer: undefined,
       navigator: geo === null ? {} : { geolocation: geo || { getCurrentPosition: vi.fn() } },
       location: { pathname: "/blog/a", search: "?utm_source=x&foo=1", assign },
-      matchMedia: () => ({ matches: mobile }),
+      matchMedia: () => ({ matches: false }), // desktop width: picks still submit
       requestAnimationFrame: (cb) => cb(),
       MutationObserver: window.MutationObserver,
       getComputedStyle: (el) => window.getComputedStyle(el),
@@ -381,7 +381,7 @@ describe("initHeaderAddress", () => {
       expect(win.staymoValidateAddress).toHaveBeenCalledTimes(2);
     });
 
-    it("Enter submits after a short delay, as a pick when a place was selected", async () => {
+    it("Enter submits typed text after a short delay", async () => {
       setup();
       win.staymoValidateAddress = vi.fn(async () => true);
       input.value = "1 Rose St";
@@ -389,29 +389,49 @@ describe("initHeaderAddress", () => {
       const ev = new KeyboardEvent("keydown", { key: "Enter", cancelable: true });
       input.dispatchEvent(ev);
       expect(ev.defaultPrevented).toBe(true);
-      input.dataset.placeSelected = "1";
       await vi.advanceTimersByTimeAsync(100);
       expect(win.staymoValidateAddress).not.toHaveBeenCalled();
       await vi.advanceTimersByTimeAsync(300);
       expect(assign).toHaveBeenCalled();
-      expect(win.dataLayer.find((e) => e.event === "header_address_submit").method).toBe("pick");
+      expect(win.dataLayer.find((e) => e.event === "header_address_submit").method).toBe("typed");
     });
 
-    it("on mobile a dropdown pick submits; on desktop it doesn't", async () => {
-      setup({ mobile: true });
+    it("a dropdown pick submits at once at desktop width", async () => {
+      setup();
       win.staymoValidateAddress = vi.fn(async () => true);
       input.value = "1 Rose St";
       postal.value = "SW1V 1AA";
       input.dataset.placeSelected = "1";
       await vi.advanceTimersByTimeAsync(0);
       expect(assign).toHaveBeenCalledTimes(1);
+      expect(assign.mock.calls[0][0]).toMatch(/^\/start-hosting\?postal-code=SW1V\+1AA&/);
+      expect(win.dataLayer.filter((e) => e.event === "header_address_submit")).toEqual([
+        { event: "header_address_submit", method: "pick" },
+      ]);
+    });
 
-      setup({ mobile: false });
+    it("Enter on a highlighted suggestion submits once", async () => {
+      setup();
+      win.staymoValidateAddress = vi.fn(async () => true);
+      input.focus();
+      input.value = "1 Rose";
+      input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", cancelable: true }));
+      // Google then picks the highlighted suggestion.
+      input.value = "1 Rose St, London";
+      postal.value = "SW1V 1AA";
+      input.dataset.placeSelected = "1";
+      await vi.advanceTimersByTimeAsync(500);
+      expect(assign).toHaveBeenCalledTimes(1);
+      expect(win.dataLayer.filter((e) => e.event === "header_address_submit")).toHaveLength(1);
+    });
+
+    it("typed text without a pick waits for Enter / Get Started", async () => {
+      setup();
       win.staymoValidateAddress = vi.fn(async () => true);
       input.value = "1 Rose St";
       postal.value = "SW1V 1AA";
-      input.dataset.placeSelected = "1";
-      await vi.advanceTimersByTimeAsync(0);
+      input.dispatchEvent(new Event("input"));
+      await vi.advanceTimersByTimeAsync(500);
       expect(assign).not.toHaveBeenCalled();
     });
   });
@@ -419,7 +439,7 @@ describe("initHeaderAddress", () => {
   describe("storage", () => {
     it("prefills from a fresh entry and reports method=stored", async () => {
       const s = memStore({ staymo_address: JSON.stringify({ address: "1 Rose St", postal: "SW1V 1AA", ts: Date.now() - 1000 }) });
-      setup({ storage: s, mobile: true });
+      setup({ storage: s });
       expect(input.value).toBe("1 Rose St");
       expect(postal.value).toBe("SW1V 1AA");
       expect(input.dataset.placeSelected).toBe("1");
@@ -517,6 +537,18 @@ describe("initHeaderAddress", () => {
       expect(win.dataLayer.find((e) => e.event === "header_address_submit").method).toBe("pick");
     });
 
+    it("a pick after clearing submits at once", async () => {
+      setup({ storage: entry(), clear: true });
+      win.staymoValidateAddress = vi.fn(async () => true);
+      $("[data-hdr-addr-clear]").click();
+      input.value = "2 Elm Rd";
+      postal.value = "E14 9GP";
+      input.dataset.placeSelected = "1";
+      await vi.advanceTimersByTimeAsync(0);
+      expect(assign).toHaveBeenCalledTimes(1);
+      expect(win.dataLayer.find((e) => e.event === "header_address_submit").method).toBe("pick");
+    });
+
     it("works with sessionStorage null or throwing", () => {
       setup({ storage: null, clear: true });
       input.value = "x";
@@ -554,7 +586,7 @@ describe("initHeaderAddress", () => {
 
     it("fills the full address on a precise fix, waits for Maps, no navigation", async () => {
       const geo = geoOk(15);
-      setup({ geo, mobile: true });
+      setup({ geo });
       const { geocode, maps } = mapsWith(results);
       input.focus();
       $("[data-hdr-addr-geo]").click();

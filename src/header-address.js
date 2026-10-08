@@ -14,6 +14,8 @@
    past, "nav" when scrolling back up; never leaves "addr" while the field is in use.
    dataLayer: header_address_focus, header_address_geo, header_address_submit,
    header_address_clear.
+   Picking a Google suggestion submits at once (all widths); typed text waits for
+   Enter / Get Started, geo and stored fills never auto-submit.
    A valid address goes to /start-hosting?postal-code=… (no address in the URL —
    the address itself travels through sessionStorage "staymo_address").
    No-op on pages without the root, and when the root is not rendered
@@ -199,7 +201,6 @@ export function initHeaderAddress(win = window, doc = document) {
     }
   })();
   const dataLayer = (win.dataLayer = win.dataLayer || []);
-  const mobile = win.matchMedia ? win.matchMedia("(max-width: 767px)") : { matches: false };
 
   let mode = "nav";
   let anchor = null;
@@ -211,7 +212,7 @@ export function initHeaderAddress(win = window, doc = document) {
   let rafPending = false;
   let blurTimer = null;
   // Last programmatic fill: lets submit report "geo"/"stored" and keeps the
-  // mobile pick-submit from firing on our own placeSelected writes.
+  // pick-submit from firing on our own placeSelected writes.
   let fill = null;
 
   // --- Mode ---
@@ -468,11 +469,11 @@ export function initHeaderAddress(win = window, doc = document) {
   const stored = readStored(storage);
   if (stored && !input.value.trim()) fillInputs(stored.address, stored.postal, "stored");
 
-  // Mobile: a dropdown pick submits at once (observer set up after the prefill).
+  // A dropdown pick submits at once on every width (observer set up after the prefill).
   if (typeof win.MutationObserver === "function") {
     new win.MutationObserver((records) => {
       const turnedOn = records.some((r) => r.oldValue !== "1") && input.dataset.placeSelected === "1";
-      if (!turnedOn || !mobile.matches) return;
+      if (!turnedOn) return;
       if (fill && input.value === fill.value) return; // our own fill, not a pick
       submit();
     }).observe(input, { attributes: true, attributeFilter: ["data-place-selected"], attributeOldValue: true });
