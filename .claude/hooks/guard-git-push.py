@@ -22,9 +22,12 @@ through MCP only through it). settings.json sends every `mcp__<server>__merge_pu
 `..._enable_pr_auto_merge` here (matcher) and denies no merge_pull_request by name. Auto-merge is refused.
 A merge passes only with merge_method "merge", expectedHeadSha (GitHub then refuses it if the head
 moved: no race), a commit_message carrying «Ревизор: ok · <its sha7>» (a tripwire, not proof), a clone
-of owner/repo at $CLAUDE_PROJECT_DIR or beside it (`../<repo>`, origin matching), `git fetch origin
-refs/pull/<N>/head main` landing on that sha, and the files from merge-base to it missing the locks.
-Any failure or timeout refuses. The fetch overwrites the clone's FETCH_HEAD and adds objects, nothing else.
+of owner/repo at $CLAUDE_PROJECT_DIR, in it or beside it (`<repo>`, `../<repo>`, origin matching), `git
+fetch origin refs/pull/<N>/head main` landing on that sha, and the files from merge-base to it missing the
+locks. Any failure or timeout refuses. The fetch overwrites the clone's FETCH_HEAD and adds objects,
+nothing else; it holds a lock file in the temp dir, as the project's and the environment's hook (the kit's
+templates/cloud-setup.sh: the gate also holds when the session's directory is no repo root, as after
+`add_repo`) run this check at once on one clone.
 
 The copy exception (decision 13, amended 2026-10-08, Dmitry: «копии — мои»), on both paths: outside
 the kit, a PR that touches a lock passes when every lock file at its pinned head equals its source on
@@ -43,6 +46,7 @@ Source: Dmitry-Wide/studio-kit .claude/hooks/guard-git-push.py. Edit there; its 
 copies it to each repo.
 Self-test: python3 .claude/hooks/guard-git-push.py --selftest
 """
+import fcntl
 import hashlib
 import json
 import os
@@ -50,6 +54,7 @@ import re
 import shlex
 import subprocess
 import sys
+import tempfile
 import time
 
 # One budget for every `gh` call a command needs: past the hook's 10 s timeout it would fail open.
@@ -403,7 +408,7 @@ def check_mcp_merge(inp):
         return GATE.format(f"commit_message lacks the verdict line «Ревизор: ok · {head[:7]}»")
     clone = find_clone(owner, repo)
     if not clone:
-        return GATE.format(f"No clone of {owner}/{repo} at $CLAUDE_PROJECT_DIR or beside it")
+        return GATE.format(f"No clone of {owner}/{repo} at $CLAUDE_PROJECT_DIR, in it or beside it")
     files, why = pr_diff(clone, number, head)
     if why:
         return GATE.format(why)
@@ -418,9 +423,9 @@ def check_mcp_merge(inp):
 
 
 def find_clone(owner, repo):
-    """$CLAUDE_PROJECT_DIR or its sibling `<repo>`, whichever is a clone whose origin is owner/repo."""
+    """$CLAUDE_PROJECT_DIR, its `<repo>` or its sibling `<repo>`, whichever is a clone of owner/repo first."""
     base = os.path.abspath(os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd())
-    for d in (base, os.path.join(os.path.dirname(base), repo)):
+    for d in (base, os.path.join(base, repo), os.path.join(os.path.dirname(base), repo)):
         out, why = run_tool(["git", "-C", d, "remote", "get-url", "origin"]) if os.path.isdir(d) else (None, "-")
         url = "" if why else re.sub(r"(\.git)?/*$", "", out.decode(errors="replace").strip())
         if re.split(r"[/:]", url.lower())[-2:] == [owner.lower(), repo.lower()]:
@@ -430,16 +435,27 @@ def find_clone(owner, repo):
 
 def pr_diff(clone, number, head):
     """(the files the PR head changes since its merge-base with main, None) or (None, why)."""
-    _, why = run_tool(["git", "-C", clone, "fetch", "--no-tags", "--quiet", "origin",
-                       f"refs/pull/{number}/head", "refs/heads/main"])
-    if why:
-        return None, f"git fetch of PR {number} and main: {why}"
-    path, why = run_tool(["git", "-C", clone, "rev-parse", "--git-path", "FETCH_HEAD"])
-    try:  # relative to the clone; one line per refspec, in their order
-        path = os.path.join(clone, path.decode().strip())
-        fetched = [line.split("\t", 1)[0] for line in open(path, encoding="utf-8").read().splitlines()]
-    except (OSError, AttributeError, UnicodeDecodeError) as e:
-        return None, f"FETCH_HEAD: {why or type(e).__name__}"
+    lock = os.path.join(tempfile.gettempdir(), "guard-git-push-%s.lock"
+                        % hashlib.sha1(os.path.realpath(clone).encode()).hexdigest()[:12])
+    with open(lock, "a") as held:  # two hooks fetching into one clone at once would mix their FETCH_HEADs
+        while True:
+            try:
+                fcntl.flock(held, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except OSError:
+                if time.monotonic() > DEADLINE - 1:
+                    return None, "Another run of this check holds the clone's fetch: try again"
+                time.sleep(0.1)
+        _, why = run_tool(["git", "-C", clone, "fetch", "--no-tags", "--quiet", "origin",
+                           f"refs/pull/{number}/head", "refs/heads/main"])
+        if why:
+            return None, f"git fetch of PR {number} and main: {why}"
+        path, why = run_tool(["git", "-C", clone, "rev-parse", "--git-path", "FETCH_HEAD"])
+        try:  # relative to the clone; one line per refspec, in their order
+            path = os.path.join(clone, path.decode().strip())
+            fetched = [line.split("\t", 1)[0] for line in open(path, encoding="utf-8").read().splitlines()]
+        except (OSError, AttributeError, UnicodeDecodeError) as e:
+            return None, f"FETCH_HEAD: {why or type(e).__name__}"
     if len(fetched) != 2:
         return None, "FETCH_HEAD: not the PR head and main"
     if fetched[0] != head:
@@ -747,7 +763,6 @@ def selftest():
     kit_state.update(up=True, tree="false\n")
 
     # The MCP merge gate, on real git: a bare origin with refs/pull/<N>/head, a clone of it, kit@main as above.
-    import tempfile
     saved = {k: os.environ.get(k) for k in ("CLAUDE_PROJECT_DIR", "GIT_CONFIG_GLOBAL", "GIT_CONFIG_NOSYSTEM")}
     os.environ.update(GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM="1")
     with tempfile.TemporaryDirectory() as d:
@@ -802,6 +817,7 @@ def selftest():
             (work, call(), None),
             (work, call(name="mcp__claude_ai_GitHub__merge_pull_request"), None),
             (other, call(), None),  # the sibling ../r of the project dir
+            (os.path.dirname(work), call(), None),  # r inside the project dir: a session opened above the clones
             (work, call(6), None),  # a kit copy: the hook equals kit@main
             (work, call(expectedHeadSha=None), "expectedHeadSha must be"),
             (work, call(merge_method="squash"), "merge_method must be"),
@@ -811,6 +827,7 @@ def selftest():
             (work, call(5, at=prs[6]), "The head moved"),
             (work, call(9, at="9" * 40), "git fetch of PR 9"),
             (other, call(repo="zzz"), "No clone of o/zzz"),
+            (os.path.dirname(work), call(repo="zzz"), "No clone of o/zzz"),
             (work, call(7), f"{hook_path} differs from kit@main"),
             (work, call(8), "is no kit copy"),
             (kit_work, call(6, owner="Dmitry-Wide", repo="studio-kit"), "in the kit every lock is Dmitry's"),
@@ -825,6 +842,17 @@ def selftest():
             ok = got is None if want is None else got is not None and want in got
             print(("  ok    " if ok else "  FAIL  ") + f"gate {raw[:80]!r} -> {(got or 'allow')[:110]}")
             fail += not ok
+        # A run that holds the clone's fetch (the other hook, at once) makes this one wait, then refuse.
+        lock = os.path.join(tempfile.gettempdir(), "guard-git-push-%s.lock"
+                            % hashlib.sha1(os.path.realpath(work).encode()).hexdigest()[:12])
+        with open(lock, "a") as held:
+            fcntl.flock(held, fcntl.LOCK_EX)
+            os.environ["CLAUDE_PROJECT_DIR"] = work
+            DEADLINE = time.monotonic() + 1.5
+            got = decide(call())
+        ok = got is not None and "Another run of this check" in got
+        print(("  ok    " if ok else "  FAIL  ") + f"gate with the fetch held -> {(got or 'allow')[:110]}")
+        fail += not ok
     for k, v in saved.items():
         os.environ.pop(k, None) if v is None else os.environ.__setitem__(k, v)
     gh_api = real_gh_api
