@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """PreToolUse hook: refuse a force-push, any deletion of main, merging a PR that touches the locks and
-editing or deleting a GitHub ruleset, from Claude's shell tools.
+editing or deleting a GitHub ruleset, from Claude's shell tools; gate the GitHub MCP merge.
 
 core.hooksPath does not travel to cloud sessions and most repos have no .githooks/pre-push,
 so this is the gate that goes wherever .claude/ goes. It stops accidents, not a determined
@@ -11,10 +11,29 @@ mutations slip past it.
 The rulesets on GitHub reject a direct push to main, but the agents act with Dmitry's own token:
 GitHub cannot tell them from him. So an agent merges its own PR only when the PR's files, read from
 GitHub right here, miss the locks: .github/workflows/, .claude/hooks/, .claude/settings.json and, in
-the kit, the check every copy's CI runs at the kit's main: action.yml, tools/studio-copy.py. A PR
+the kit, the check every copy's CI runs at the kit's main: action.yml, tools/studio-copy.py and the
+workflow template it writes, templates/studio-kit.yml. A PR
 that touches them, a PR whose files cannot be read in time, --auto (GitHub later merges a head the
 hook never saw) and --admin are Dmitry's. A push to the PR between this check and the merge is not
 seen. Loosening a ruleset is refused; creating one is allowed.
+
+The MCP merge gate (S6 of the studio's tools/studio-map/feed-spec.md; Dmitry, 2026-10-08: agents merge
+through MCP only through it). settings.json sends every `mcp__<server>__merge_pull_request` and
+`..._enable_pr_auto_merge` here (matcher) and denies no merge_pull_request by name. Auto-merge is refused.
+A merge passes only with merge_method "merge", expectedHeadSha (GitHub then refuses it if the head
+moved: no race), a commit_message carrying «Ревизор: ok · <its sha7>» (a tripwire, not proof), a clone
+of owner/repo at $CLAUDE_PROJECT_DIR or beside it (`../<repo>`, origin matching), `git fetch origin
+refs/pull/<N>/head main` landing on that sha, and the files from merge-base to it missing the locks.
+Any failure or timeout refuses. The fetch overwrites the clone's FETCH_HEAD and adds objects, nothing else.
+
+The copy exception (decision 13, amended 2026-10-08, Dmitry: «копии — мои»), on both paths: outside
+the kit, a PR that touches a lock passes when every lock file at its pinned head equals its source on
+kit@main byte for byte (git blob ids: a hook at the same path; studio-kit.yml as templates/studio-kit.yml
+renders it, with either set's flags) and every other file is a copy too (.claude/rules/studio.md, a
+file of a .claude/skills/ dir that kit@main has). `gh pr merge` pins with `--match-head-commit <sha>`,
+`gh api .../merge` with `-f sha=<sha>`. A lock edit in the kit itself, a lock with no source on kit@main
+(.claude/settings.json, any other workflow), a lock gone at the head, a truncated tree or a failed
+read of kit@main (through `gh api`) stay Dmitry's.
 
 Force-push is refused on every branch, not only main: the target of a bare `git push -f`
 cannot be read from the command line, and the studio rule is "no push --force" anyway.
@@ -24,6 +43,7 @@ Source: Dmitry-Wide/studio-kit .claude/hooks/guard-git-push.py. Edit there; its 
 copies it to each repo.
 Self-test: python3 .claude/hooks/guard-git-push.py --selftest
 """
+import hashlib
 import json
 import os
 import re
@@ -35,7 +55,14 @@ import time
 # One budget for every `gh` call a command needs: past the hook's 10 s timeout it would fail open.
 DEADLINE = time.monotonic() + 7
 LOCKS = re.compile(r"(^|/)(\.github/workflows|\.claude/hooks)/|(^|/)\.claude/settings\.json$"
-                   r"|^(action\.yml|tools/studio-copy\.py)$")  # the kit's check: every copy runs it at main
+                   r"|^(action\.yml|tools/studio-copy\.py|templates/studio-kit\.yml)$")  # the kit's check: every copy runs it at main
+KIT = "dmitry-wide/studio-kit"  # lower case: GitHub names are case-insensitive
+WORKFLOW = ".github/workflows/studio-kit.yml"  # the kit's tools/studio-copy.py writes it from TEMPLATE
+TEMPLATE = "templates/studio-kit.yml"  # its flags as {flags}: "" (the core set) or "--skills"
+COPIES = re.compile(r"^\.claude/(rules/studio\.md|skills/[^/]+/.+)$")  # the other files a copy writes
+MCP_MERGE = re.compile(r"mcp__.+__merge_pull_request")
+MCP_AUTO = re.compile(r"mcp__.+__enable_pr_auto_merge")
+FIELD_OPTS = ("-f", "-F", "--field", "--raw-field")
 MERGE_OPTS_WITH_ARG = ("-R", "--repo", "-A", "--author-email", "-b", "--body", "-F", "--body-file",
                        "-t", "--subject", "--match-head-commit")
 PROTECTED = ("main", "heads/main", "refs/heads/main")
@@ -59,8 +86,14 @@ NAME_PR = ("Blocked by .claude/hooks/guard-git-push.py: name the pull request by
            "`gh pr merge <N> -R <owner>/<repo>` or `gh api -X PUT repos/<owner>/<repo>/pulls/<N>/merge`: "
            "the hook reads its files before an agent merges it.")
 LOCKED = ("Blocked by .claude/hooks/guard-git-push.py: {} touches {}. A PR that touches the checks and "
-          "locks (.github/workflows/, .claude/hooks/, .claude/settings.json; in the kit, action.yml and "
-          "tools/studio-copy.py) is Dmitry's to merge: give him the PR link.")
+          "locks (.github/workflows/, .claude/hooks/, .claude/settings.json; in the kit, action.yml, "
+          "tools/studio-copy.py, templates/studio-kit.yml) is Dmitry's to merge: give him the PR link.")
+COPY = ("Blocked by .claude/hooks/guard-git-push.py: {} touches {} and is no kit copy an agent may merge "
+        "({}). A PR that touches the locks is Dmitry's to merge, unless outside the kit every lock in it "
+        "equals kit@main byte for byte and the merge pins the head: give him the PR link.")
+NOPIN = "the merge pins no head: add `--match-head-commit <sha>` (gh api: `-f sha=<sha>`)"
+GATE = ("Blocked by .claude/hooks/guard-git-push.py, the MCP merge gate: замок или нет вердикта — ссылку "
+        "Дмитрию. {}.")
 UNKNOWN = ("Blocked by .claude/hooks/guard-git-push.py: could not read the files of {} from GitHub ({}), "
            "so it may touch the locks. Retry, or give Dmitry the PR link.")
 AUTO = ("Blocked by .claude/hooks/guard-git-push.py: --auto and --admin are off for agents. Wait for the "
@@ -211,10 +244,24 @@ def check_gh(args):
     if methods and any(re.search(r"pulls/[^/]+/merge\b", a) for a in args):
         pr = next(filter(None, (re.search(r"(?:^|/)repos/([\w.-]+)/([\w.-]+)/pulls/(\d+)/merge$", a)
                                 for a in args)), None)
-        return check_files(*pr.groups()) if pr else NAME_PR
+        return check_files(*pr.groups(), api_pin(args)) if pr else NAME_PR
     if methods and any(re.search(r"(^|/)rulesets(/|$)", a) for a in args):
         return RULESET
     return None
+
+
+def api_pin(args):
+    """The `sha` field of `gh api ... pulls/N/merge` (GitHub merges only that head), or ""."""
+    for k, a in enumerate(args):
+        if a in FIELD_OPTS:
+            a = args[k + 1] if k + 1 < len(args) else ""
+        elif re.match(r"-[fF].|--(raw-)?field=", a):
+            a = re.sub(r"^(-[fF]|--(raw-)?field=)", "", a)
+        else:
+            continue
+        if a.startswith("sha="):
+            return a[4:]
+    return ""
 
 
 def check_pr(args):
@@ -232,7 +279,7 @@ def check_merge(args):
     text, not the folder (`cd ../x && gh pr merge 5`): so the PR is named in full. -R also keeps gh's
     -d from deleting the local branch with `git branch -D`.
     """
-    repo, picks, it = "", [], iter(args)
+    repo, pin, picks, it = "", "", [], iter(args)
     for a in it:
         opt, eq, val = a.partition("=")
         if a in ("-h", "--help"):
@@ -242,21 +289,182 @@ def check_merge(args):
         if opt in MERGE_OPTS_WITH_ARG:
             val = val if eq else next(it, "")
             repo = val if opt in ("-R", "--repo") else repo
+            pin = val if opt == "--match-head-commit" else pin
         elif not a.startswith("-"):
             picks.append(a)
     m = re.fullmatch(r"(?:github\.com/)?([\w.-]+)/([\w.-]+)", repo)
     if not (m and picks and picks[0].isdigit()):
         return NAME_PR
-    return check_files(m[1], m[2], picks[0])
+    return check_files(m[1], m[2], picks[0], pin)
 
 
-def check_files(owner, repo, number):
+def check_files(owner, repo, number, pin=""):
     pr = f"{owner}/{repo}#{number}"
     files, why = pr_files(owner, repo, number)
     if why:
         return UNKNOWN.format(pr, why)
     hit = next((f for f in files if LOCKS.search(f)), None)
-    return LOCKED.format(pr, hit) if hit else None
+    if not hit:
+        return None
+    if f"{owner}/{repo}".lower() == KIT:
+        return LOCKED.format(pr, hit)
+    why = NOPIN if not pin else head_is(owner, repo, number, pin)
+    if not why:
+        have, why = api_blobs(owner, repo, pin.lower())
+        why = why or copy_equal(files, have)
+    return COPY.format(pr, hit, why) if why else None
+
+
+def head_is(owner, repo, number, pin):
+    """None when the PR's head is the pinned sha, else why not."""
+    out, why = gh_api(f"repos/{owner}/{repo}/pulls/{number}", jq=".head.sha")
+    if why:
+        return f"its head: {why}"
+    head = out.decode(errors="replace").strip()
+    return None if head == pin.lower() else f"the pinned {pin[:12]} is not its head {head[:12]}"
+
+
+def copy_equal(files, have):
+    """None when every file is a kit copy and every lock among them, at the head whose {path: blob id} is
+    `have`, equals its source on kit@main; else why not."""
+    kit, why = api_blobs(*KIT.split("/"), "main")
+    if why:
+        return why
+    for f in files:
+        if not LOCKS.search(f):
+            if not (COPIES.match(f) and f in kit):
+                return f"{f} is not a kit copy"
+            continue
+        if f == WORKFLOW:
+            text, why = gh_api(f"repos/{KIT}/contents/{TEMPLATE}?ref=main", raw=True)
+            if why:
+                return f"{TEMPLATE} on kit@main: {why}"
+            want = {blob_id(text.replace(b"{flags}", flags)) for flags in (b"", b"--skills")}
+        elif f.startswith(".claude/hooks/") and f in kit:
+            want = {kit[f]}
+        else:
+            return f"{f} has no source on kit@main"
+        if have.get(f) not in want:
+            return f"{f} differs from kit@main" if f in have else f"{f} is gone at the head"
+    return None
+
+
+def blob_id(data):
+    return hashlib.sha1(b"blob %d\0" % len(data) + data).hexdigest()
+
+
+def api_blobs(owner, repo, ref):
+    """({path: git blob id} of the tree at ref, None) or (None, why)."""
+    where = f"the tree of {owner}/{repo}@{ref[:12]}"
+    out, why = gh_api(f"repos/{owner}/{repo}/git/trees/{ref}?recursive=1",
+                      jq='.truncated, (.tree[] | select(.type == "blob") | [.path, .sha])')
+    if why:
+        return None, f"{where}: {why}"
+    try:
+        lines = out.decode().splitlines()
+        tree = dict(json.loads(line) for line in lines[1:])
+    except (ValueError, TypeError):  # bad JSON, a row that is no pair
+        return None, f"{where}: unexpected gh output"
+    if lines[:1] != ["false"]:
+        return None, f"{where}: truncated"
+    return tree, None
+
+
+def gh_api(path, jq=None, raw=False):
+    """(stdout bytes, None) or (None, why GitHub did not say), inside the one DEADLINE."""
+    cmd = (["gh", "api", path] + (["--jq", jq] if jq else [])
+           + (["-H", "Accept: application/vnd.github.raw"] if raw else []))
+    return run_tool(cmd)
+
+
+def run_tool(cmd, cwd=None):
+    try:
+        run = subprocess.run(cmd, cwd=cwd, stdin=subprocess.DEVNULL, capture_output=True,
+                             env=dict(os.environ, GIT_TERMINAL_PROMPT="0"),
+                             timeout=max(DEADLINE - time.monotonic(), 0.01))
+    except (OSError, subprocess.TimeoutExpired) as e:
+        return None, type(e).__name__
+    if run.returncode:
+        return None, (run.stderr.decode(errors="replace").strip() or f"exit {run.returncode}")[:200]
+    return run.stdout, None
+
+
+def check_mcp_merge(inp):
+    """The MCP merge gate: why not, or None (see the docstring at the top)."""
+    owner, repo, number = (str(inp.get(k, "")) for k in ("owner", "repo", "pullNumber"))
+    head = str(inp.get("expectedHeadSha") or "").lower()
+    if not (re.fullmatch(r"[\w.-]+", owner) and re.fullmatch(r"[\w.-]+", repo) and number.isdigit()):
+        return GATE.format("Name the PR by owner, repo and pullNumber")
+    if inp.get("merge_method") != "merge":
+        return GATE.format('merge_method must be "merge": a merge commit')
+    if not re.fullmatch(r"[0-9a-f]{40}", head):
+        return GATE.format("expectedHeadSha must be the full sha of the head the reviewer read")
+    if f"Ревизор: ok · {head[:7]}" not in str(inp.get("commit_message") or ""):
+        return GATE.format(f"commit_message lacks the verdict line «Ревизор: ok · {head[:7]}»")
+    clone = find_clone(owner, repo)
+    if not clone:
+        return GATE.format(f"No clone of {owner}/{repo} at $CLAUDE_PROJECT_DIR or beside it")
+    files, why = pr_diff(clone, number, head)
+    if why:
+        return GATE.format(why)
+    hit = next((f for f in files if LOCKS.search(f)), None)
+    if not hit:
+        return None
+    if f"{owner}/{repo}".lower() == KIT:
+        return GATE.format(f"It touches {hit}: in the kit every lock is Dmitry's")
+    have, why = git_blobs(clone, head)
+    why = why or copy_equal(files, have)
+    return GATE.format(f"It touches {hit} and is no kit copy equal to kit@main: {why}") if why else None
+
+
+def find_clone(owner, repo):
+    """$CLAUDE_PROJECT_DIR or its sibling `<repo>`, whichever is a clone whose origin is owner/repo."""
+    base = os.path.abspath(os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd())
+    for d in (base, os.path.join(os.path.dirname(base), repo)):
+        out, why = run_tool(["git", "-C", d, "remote", "get-url", "origin"]) if os.path.isdir(d) else (None, "-")
+        url = "" if why else re.sub(r"(\.git)?/*$", "", out.decode(errors="replace").strip())
+        if re.split(r"[/:]", url.lower())[-2:] == [owner.lower(), repo.lower()]:
+            return d
+    return None
+
+
+def pr_diff(clone, number, head):
+    """(the files the PR head changes since its merge-base with main, None) or (None, why)."""
+    _, why = run_tool(["git", "-C", clone, "fetch", "--no-tags", "--quiet", "origin",
+                       f"refs/pull/{number}/head", "refs/heads/main"])
+    if why:
+        return None, f"git fetch of PR {number} and main: {why}"
+    path, why = run_tool(["git", "-C", clone, "rev-parse", "--git-path", "FETCH_HEAD"])
+    try:  # relative to the clone; one line per refspec, in their order
+        path = os.path.join(clone, path.decode().strip())
+        fetched = [line.split("\t", 1)[0] for line in open(path, encoding="utf-8").read().splitlines()]
+    except (OSError, AttributeError, UnicodeDecodeError) as e:
+        return None, f"FETCH_HEAD: {why or type(e).__name__}"
+    if len(fetched) != 2:
+        return None, "FETCH_HEAD: not the PR head and main"
+    if fetched[0] != head:
+        return None, f"The head moved: PR {number} is at {fetched[0][:12]}, expectedHeadSha {head[:12]}"
+    base, why = run_tool(["git", "-C", clone, "merge-base", fetched[1], head])
+    if why:
+        return None, f"git merge-base with main: {why}"
+    out, why = run_tool(["git", "-C", clone, "diff", "--name-only", "--no-renames", "-z",
+                         base.decode().strip(), head])
+    if why:
+        return None, f"git diff: {why}"
+    return [f for f in out.decode(errors="replace").split("\0") if f], None
+
+
+def git_blobs(clone, ref):
+    """({path: git blob id} of the tree at ref, None) or (None, why), from the clone."""
+    out, why = run_tool(["git", "-C", clone, "ls-tree", "-r", "-z", "--full-tree", ref])
+    if why:
+        return None, f"git ls-tree: {why}"
+    tree = {}
+    for row in out.decode(errors="replace").split("\0"):
+        meta, _, path = row.partition("\t")
+        if meta.split(" ")[1:2] == ["blob"]:
+            tree[path] = meta.split(" ")[2]
+    return tree, None
 
 
 def pr_files(owner, repo, number):
@@ -319,13 +527,14 @@ def verdict(cmd):
 
 
 def selftest():
-    global pr_files, DEADLINE
+    global pr_files, gh_api, DEADLINE
     real_pr_files = pr_files  # no network in the checks below: a PR's files come from this table
     fake = {"10": ["docs/a.md"], "11": ["docs/a.md", ".github/workflows/studio-kit.yml"],
             "12": [".claude/hooks/guard-git-push.py"], "13": [".claude/settings.json"],
             "14": ["docs/guard.py", ".claude/hooks/guard.py"],  # moved out of the hooks folder
             "15": ["site/.claude/settings.json"], "16": ["action.yml"], "17": ["tools/studio-copy.py"],
-            "18": ["site/action.yml", "tools/studio-copy.py.md"]}  # the kit's check is locked at its own paths only
+            "18": ["site/action.yml", "tools/studio-copy.py.md"],  # the kit's check is locked at its own paths only
+            "19": ["templates/studio-kit.yml"]}  # the workflow every copy runs, as studio-copy writes it
     pr_files = lambda o, r, n: (fake[n], None) if (o, r) == ("o", "r") and n in fake else (None, "HTTP 404")
     blocked = [
         "git push --force origin main",
@@ -437,7 +646,7 @@ def selftest():
         print(("  ok    " if got == want else "  FAIL  ") + ("block " if want else "allow ") + repr(cmd))
         fail += got != want
     # An agent merges a PR named in full whose files miss the locks; the reason must be the right one.
-    lock = lambda n, f: LOCKED.format(f"o/r#{n}", f)
+    lock = lambda n, f: COPY.format(f"o/r#{n}", f, NOPIN)  # outside the kit; no pin, so no copy
     merges = [
         ("gh pr merge 10 -R o/r --merge", None),
         ("gh pr merge 10 --repo github.com/o/r -m -t 'docs: 11' -b 'x -R y/z'", None),
@@ -452,6 +661,7 @@ def selftest():
         ("gh pr merge 15 -R o/r", lock(15, "site/.claude/settings.json")),
         ("gh pr merge 16 -R o/r", lock(16, "action.yml")),
         ("gh pr merge 17 -R o/r", lock(17, "tools/studio-copy.py")),
+        ("gh pr merge 19 -R o/r", lock(19, "templates/studio-kit.yml")),
         ("gh pr merge 18 -R o/r", None),
         ("gh api -X PUT repos/o/r/pulls/11/merge", lock(11, ".github/workflows/studio-kit.yml")),
         ("gh pr merge 10 -R o/r && gh pr merge 12 -R o/r", lock(12, ".claude/hooks/guard-git-push.py")),
@@ -476,10 +686,152 @@ def selftest():
         got = verdict(cmd)
         print(("  ok    " if got == want else "  FAIL  ") + f"merge {cmd!r} -> {(got or 'allow')[:90]}")
         fail += got != want
+
+    # The copy exception. kit@main and each PR head come from these tables: a head is its number in hex.
+    real_gh_api, hook_path, skill = gh_api, ".claude/hooks/guard-git-push.py", ".claude/skills/nodes/SKILL.md"
+    hook, tpl = b"#!/usr/bin/env python3\n# guard\n", b'flags: "{flags}"\n'
+    sha = lambda n: f"{int(n):040x}"
+    kit = {hook_path: blob_id(hook), skill: "1" * 40, TEMPLATE: blob_id(tpl), ".claude/settings.json": "2" * 40}
+    equal = {hook_path: blob_id(hook), WORKFLOW: blob_id(b'flags: "--skills"\n'), skill: "3" * 40, "docs/a.md": "4" * 40}
+    heads = {"20": equal, "21": dict(equal, **{hook_path: blob_id(hook.replace(b"guard", b"guarD"))}),
+             "22": dict(equal, **{".claude/settings.json": "5" * 40}), "23": equal,
+             "24": dict(equal, **{WORKFLOW: blob_id(b'flags: "--skills"\n# edited\n')}),
+             "25": {k: v for k, v in equal.items() if k != hook_path}, "26": equal}
+    fake.update({"20": [hook_path, WORKFLOW, skill], "21": [hook_path], "22": [".claude/settings.json"],
+                 "23": [hook_path, "docs/a.md"], "24": [WORKFLOW], "25": [hook_path],
+                 "26": [".github/workflows/other.yml"]})
+    kit_state = {"tree": "false\n", "up": True}
+
+    def fake_gh_api(path, jq=None, raw=False):
+        rows = lambda t: "".join(json.dumps([p, h]) + "\n" for p, h in t.items())
+        m = re.fullmatch(r"repos/(?:o/r|Dmitry-Wide/studio-kit)/pulls/(\d+)", path)
+        if m and m[1] in heads:
+            return (sha(m[1]) + "\n").encode(), None
+        m = re.fullmatch(r"repos/o/r/git/trees/([0-9a-f]{40})\?recursive=1", path)
+        if m and str(int(m[1], 16)) in heads:
+            return ("false\n" + rows(heads[str(int(m[1], 16))])).encode(), None
+        if kit_state["up"] and path == f"repos/{KIT}/git/trees/main?recursive=1":
+            return (kit_state["tree"] + rows(kit)).encode(), None
+        if kit_state["up"] and path == f"repos/{KIT}/contents/{TEMPLATE}?ref=main" and raw:
+            return tpl, None
+        return None, "HTTP 404"
+    gh_api = fake_gh_api
+    pr_files = lambda o, r, n: (fake[n], None) if r in ("r", "studio-kit") and n in fake else (None, "HTTP 404")
+    pin = lambda n: f" --match-head-commit {sha(n)}"
+    copies = [
+        ("gh pr merge 20 -R o/r --merge" + pin(20), None),
+        (f"gh api -X PUT repos/o/r/pulls/20/merge -f merge_method=merge -f sha={sha(20)}", None),
+        (f"gh api -X PUT repos/o/r/pulls/20/merge --raw-field=sha={sha(20)}", None),
+        ("gh pr merge 20 -R o/r --merge", NOPIN),
+        ("gh api -X PUT repos/o/r/pulls/20/merge -f merge_method=merge", NOPIN),
+        ("gh pr merge 20 -R o/r --match-head-commit " + "c" * 40, "is not its head"),
+        ("gh pr merge 21 -R o/r" + pin(21), f"{hook_path} differs from kit@main"),
+        ("gh pr merge 22 -R o/r" + pin(22), ".claude/settings.json has no source on kit@main"),
+        ("gh pr merge 23 -R o/r" + pin(23), "docs/a.md is not a kit copy"),
+        ("gh pr merge 24 -R o/r" + pin(24), f"{WORKFLOW} differs from kit@main"),
+        ("gh pr merge 25 -R o/r" + pin(25), f"{hook_path} is gone at the head"),
+        ("gh pr merge 26 -R o/r" + pin(26), ".github/workflows/other.yml has no source on kit@main"),
+        ("gh pr merge 20 -R Dmitry-Wide/studio-kit" + pin(20), LOCKED.format("Dmitry-Wide/studio-kit#20", hook_path)),
+        ("gh pr merge 19 -R Dmitry-Wide/studio-kit" + pin(20),
+         LOCKED.format("Dmitry-Wide/studio-kit#19", "templates/studio-kit.yml")),
+        ("gh pr merge 20 -R o/r" + pin(20), "kit down: HTTP 404"),
+        ("gh pr merge 20 -R o/r" + pin(20), "kit truncated: truncated"),
+    ]
+    for cmd, want in copies:
+        kit_state.update(up="kit down" not in str(want), tree="true\n" if "truncated" in str(want) else "false\n")
+        want = want.split(": ", 1)[1] if want and want.startswith("kit ") else want
+        got = verdict(cmd)
+        ok = got is None if want is None else got is not None and (got == want or want in got)
+        print(("  ok    " if ok else "  FAIL  ") + f"copy {cmd[:70]!r} -> {(got or 'allow')[:110]}")
+        fail += not ok
+    kit_state.update(up=True, tree="false\n")
+
+    # The MCP merge gate, on real git: a bare origin with refs/pull/<N>/head, a clone of it, kit@main as above.
+    import tempfile
+    saved = {k: os.environ.get(k) for k in ("CLAUDE_PROJECT_DIR", "GIT_CONFIG_GLOBAL", "GIT_CONFIG_NOSYSTEM")}
+    os.environ.update(GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM="1")
+    with tempfile.TemporaryDirectory() as d:
+        def g(cwd, *a):
+            return subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false",
+                                   *a], cwd=cwd, check=True, capture_output=True, text=True).stdout.strip()
+
+        def put(work, files):
+            for p, body in files.items():
+                os.makedirs(os.path.dirname(os.path.join(work, p)) or work, exist_ok=True)
+                open(os.path.join(work, p), "wb").write(body)
+            g(work, "add", "-A")
+            g(work, "commit", "-qm", "x")
+
+        remote, work, other = (os.path.join(d, *p) for p in (("o", "r.git"), ("w", "r"), ("w", "other")))
+        for p in (work, other):
+            os.makedirs(p)
+            g(p, "init", "-q")
+        g(d, "init", "-q", "--bare", remote)
+        g(work, "remote", "add", "origin", remote)
+        g(other, "remote", "add", "origin", os.path.join(d, "o", "other.git"))
+        put(work, {"docs/a.md": b"a\n", ".claude/hooks/x.py": b"x\n"})
+        g(work, "branch", "-M", "main")
+        g(work, "push", "-q", "origin", "main")
+        prs = {}
+        for n, change in [(5, {"docs/b.md": b"b\n"}), (6, {hook_path: hook}),
+                          (7, {hook_path: hook.replace(b"guard", b"guarD")})]:
+            g(work, "checkout", "-q", "-b", f"pr{n}", "main")
+            put(work, change)
+            prs[n] = g(work, "rev-parse", "HEAD")
+            g(work, "push", "-q", "origin", f"HEAD:refs/pull/{n}/head")
+            g(work, "checkout", "-q", "main")
+        g(work, "checkout", "-q", "-b", "pr8", "main")
+        g(work, "mv", ".claude/hooks/x.py", "docs/x.py")  # a move out of the hooks folder
+        g(work, "commit", "-qm", "x")
+        prs[8] = g(work, "rev-parse", "HEAD")
+        g(work, "push", "-q", "origin", "HEAD:refs/pull/8/head")
+        g(work, "checkout", "-q", "main")
+        put(work, {".github/workflows/ci.yml": b"on: push\n"})  # main moves on, with a lock: not the PR's
+        g(work, "push", "-q", "origin", "main")
+        kit_remote, kit_work = os.path.join(d, "Dmitry-Wide", "studio-kit.git"), os.path.join(d, "k", "studio-kit")
+        g(d, "clone", "-q", "--mirror", remote, kit_remote)
+        g(d, "clone", "-q", kit_remote, kit_work)
+
+        def call(n=5, name="mcp__github__merge_pull_request", at=None, **kw):
+            head = at or prs[n]
+            inp = dict(owner="o", repo="r", pullNumber=n, merge_method="merge", expectedHeadSha=head,
+                       commit_message=f"Ревизор: ok · {head[:7]} · https://claude.ai/code/x")
+            inp.update(kw)
+            return json.dumps({"tool_name": name, "tool_input": {k: v for k, v in inp.items() if v is not None}})
+        gate = [
+            (work, call(), None),
+            (work, call(name="mcp__claude_ai_GitHub__merge_pull_request"), None),
+            (other, call(), None),  # the sibling ../r of the project dir
+            (work, call(6), None),  # a kit copy: the hook equals kit@main
+            (work, call(expectedHeadSha=None), "expectedHeadSha must be"),
+            (work, call(merge_method="squash"), "merge_method must be"),
+            (work, call(merge_method=None), "merge_method must be"),
+            (work, call(commit_message="merge"), "lacks the verdict line"),
+            (work, call(commit_message=f"Ревизор: ok · {prs[6][:7]}"), "lacks the verdict line"),
+            (work, call(5, at=prs[6]), "The head moved"),
+            (work, call(9, at="9" * 40), "git fetch of PR 9"),
+            (other, call(repo="zzz"), "No clone of o/zzz"),
+            (work, call(7), f"{hook_path} differs from kit@main"),
+            (work, call(8), "is no kit copy"),
+            (kit_work, call(6, owner="Dmitry-Wide", repo="studio-kit"), "in the kit every lock is Dmitry's"),
+            (work, call(pullNumber="5; x"), "Name the PR"),
+            (work, call(name="mcp__github__enable_pr_auto_merge"), AUTO),
+            (work, '{"tool_name": "mcp__github__merge_pull_request", "tool_input": "x"}', "could not read this call"),
+        ]
+        for cwd, raw, want in gate:
+            os.environ["CLAUDE_PROJECT_DIR"] = cwd
+            DEADLINE = time.monotonic() + 7
+            got = decide(raw)
+            ok = got is None if want is None else got is not None and want in got
+            print(("  ok    " if ok else "  FAIL  ") + f"gate {raw[:80]!r} -> {(got or 'allow')[:110]}")
+            fail += not ok
+    for k, v in saved.items():
+        os.environ.pop(k, None) if v is None else os.environ.__setitem__(k, v)
+    gh_api = real_gh_api
+
     # The real lookup, with a fake gh alone on PATH: every way GitHub may not answer is a refusal.
     pr_files, path = real_pr_files, os.environ.get("PATH", "")
     args = "api --paginate repos/o/r/pulls/1/files?per_page=100 --jq .[] | [.filename, .previous_filename]"
-    import tempfile
     with tempfile.TemporaryDirectory() as d:
         gh, os.environ["PATH"] = os.path.join(d, "gh"), d
         for body, want in [
@@ -524,7 +876,13 @@ def selftest():
 def decide(raw):
     """The hook's stdin, the tool call as JSON -> why to refuse it, or None."""
     try:
-        cmd = (json.loads(raw).get("tool_input") or {}).get("command") or ""
+        call = json.loads(raw)
+        name, args = str(call.get("tool_name") or ""), call.get("tool_input") or {}
+        if MCP_AUTO.fullmatch(name):
+            return AUTO
+        if MCP_MERGE.fullmatch(name):
+            return check_mcp_merge(args)
+        cmd = args.get("command") or ""
         return verdict(cmd if isinstance(cmd, str) else json.dumps(cmd))
     except Exception as e:  # noqa: BLE001 - a crashed hook fails open: refuse what looks like a push
         if re.search(r"push|merge|rulesets", raw):
