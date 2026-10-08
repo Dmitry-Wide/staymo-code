@@ -1,6 +1,7 @@
 /* Bedrooms picker — wires the est__bed click tiles to a hidden [data-rooms-input]
    that the engine validates and valuation reads. Marks the chosen tile with
-   is-bed-selected. JS binds to contract attributes only. */
+   is-bed-selected. Tiles with tabindex="0" role="button" also select on
+   Enter / Space. JS binds to contract attributes only. */
 
 const SELECTED = "is-bed-selected";
 
@@ -27,6 +28,15 @@ export function initBeds(doc = document) {
     container.addEventListener("click", (e) => {
       const bed = e.target.closest("[data-room]");
       if (bed && container.contains(bed)) selectBed(container, bed);
+    });
+    container.addEventListener("keydown", (e) => {
+      if ((e.key !== "Enter" && e.key !== " ") || e.isComposing) return;
+      const bed = e.target.closest("[data-room]");
+      if (!bed || !container.contains(bed)) return;
+      // Native buttons/links already turn these keys into a click.
+      if (bed.matches("button, a[href], input")) return;
+      e.preventDefault(); // Space must not scroll
+      selectBed(container, bed);
     });
   });
 }
