@@ -16,7 +16,8 @@
    header_address_clear.
    A valid address goes to /start-hosting?postal-code=… (no address in the URL —
    the address itself travels through sessionStorage "staymo_address").
-   No-op on pages without the root. */
+   No-op on pages without the root, and when the root is not rendered
+   (display:none from a Designer variant, e.g. /dubai): no mode, no listeners, no prefill. */
 
 export const STORAGE_KEY = "staymo_address";
 export const STORAGE_TTL_MS = 30 * 60 * 1000;
@@ -181,6 +182,7 @@ function isVisible(el) {
 export function initHeaderAddress(win = window, doc = document) {
   const root = doc.querySelector('[data-hdr-addr][data-form-type="header-address"]');
   if (!root) return null;
+  if (typeof win.getComputedStyle === "function" && win.getComputedStyle(root).display === "none") return null;
   const input = root.querySelector(ADDRESS_SELECTOR);
   if (!input) return null;
   const postalInput = root.querySelector(POSTAL_SELECTOR);

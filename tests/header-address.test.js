@@ -137,7 +137,7 @@ describe("initHeaderAddress", () => {
   let store, win, input, postal, root, bar, assign;
   const $ = (s) => document.querySelector(s);
 
-  function setup({ hero = false, storage = memStore(), mobile = false, geo, clear = false } = {}) {
+  function setup({ hero = false, storage = memStore(), mobile = false, geo, clear = false, hidden = false } = {}) {
     document.body.innerHTML = `
       <div class="hdr" data-hdr-bar>
         <div data-hdr-addr data-form-type="header-address">
@@ -167,9 +167,11 @@ describe("initHeaderAddress", () => {
       matchMedia: () => ({ matches: mobile }),
       requestAnimationFrame: (cb) => cb(),
       MutationObserver: window.MutationObserver,
+      getComputedStyle: (el) => window.getComputedStyle(el),
       addEventListener: (t, fn) => (listeners[t] = listeners[t] || []).push(fn),
       fire: (t) => (listeners[t] || []).forEach((fn) => fn(new Event(t))),
     };
+    if (hidden) $("[data-hdr-addr]").style.display = "none";
     const api = initHeaderAddress(win, document);
     input = $("[data-hdr-addr] [data-input-id=address-search]");
     postal = $("[data-hdr-addr] [data-input-id=postal-code-result]");
@@ -188,6 +190,43 @@ describe("initHeaderAddress", () => {
     document.body.innerHTML = `<div data-hdr-bar></div>`;
     expect(initHeaderAddress({}, document)).toBe(null);
     expect($("[data-hdr-bar]").hasAttribute("data-hdr-mode")).toBe(false);
+  });
+
+  describe("hidden root (e.g. /dubai)", () => {
+    const entry = () =>
+      memStore({ staymo_address: JSON.stringify({ address: "1 Rose St", postal: "SW1V 1AA", ts: Date.now() - 1000 }) });
+
+    it("is off: no mode, no prefill, the CTA link works as is", async () => {
+      const api = setup({ storage: entry(), hidden: true });
+      expect(api).toBe(null);
+      expect(bar.hasAttribute("data-hdr-mode")).toBe(false);
+      win.scrollY = 900;
+      win.fire("scroll");
+      expect(bar.hasAttribute("data-hdr-mode")).toBe(false);
+      expect(input.value).toBe("");
+      expect(postal.value).toBe("");
+      const ev = new MouseEvent("click", { bubbles: true, cancelable: true });
+      $("#go").dispatchEvent(ev);
+      await vi.advanceTimersByTimeAsync(500);
+      expect(ev.defaultPrevented).toBe(false);
+      expect(assign).not.toHaveBeenCalled();
+      expect(win.dataLayer).toBeUndefined();
+    });
+
+    it("works as before when the root is visible", () => {
+      const api = setup({ storage: entry() });
+      expect(api).not.toBe(null);
+      expect(bar.dataset.hdrMode).toBe("nav");
+      expect(input.value).toBe("1 Rose St");
+      input.value = ""; // its document-level click handler outlives this test
+    });
+
+    it("works when getComputedStyle is missing", () => {
+      document.body.innerHTML = `<div data-hdr-bar><div data-hdr-addr data-form-type="header-address">
+        <input data-input-id="address-search"></div></div>`;
+      const w = { addEventListener: () => {}, scrollY: 0, innerHeight: 800, requestAnimationFrame: (cb) => cb(), location: {} };
+      expect(initHeaderAddress(w, document)).not.toBe(null);
+    });
   });
 
   it("starts in nav and switches on scroll past the first screen (no hero)", () => {
