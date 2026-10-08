@@ -48,6 +48,44 @@ describe("initBeds", () => {
     expect(c.querySelector('[data-room="4"]').classList.contains("is-bed-selected")).toBe(true);
   });
 
+  it("Enter / Space on a tile selects it and prevents the default", () => {
+    const c = bedsFixture();
+    initBeds();
+    let changes = 0;
+    c.querySelector("[data-rooms-input]").addEventListener("change", () => changes++);
+    for (const [key, room] of [["Enter", "3"], [" ", "4"]]) {
+      const tile = c.querySelector(`[data-room="${room}"]`);
+      const ev = new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true });
+      tile.dispatchEvent(ev);
+      expect(ev.defaultPrevented).toBe(true);
+      expect(c.querySelector("[data-rooms-input]").value).toBe(room);
+      expect(tile.classList.contains("is-bed-selected")).toBe(true);
+    }
+    expect(changes).toBe(2); // one selection per key, no double handling
+  });
+
+  it("ignores other keys and keys outside a tile", () => {
+    const c = bedsFixture(1);
+    initBeds();
+    const tab = new KeyboardEvent("keydown", { key: "Tab", bubbles: true, cancelable: true });
+    c.querySelector('[data-room="3"]').dispatchEvent(tab);
+    const enter = new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true });
+    c.querySelector(".row").dispatchEvent(enter);
+    expect(tab.defaultPrevented).toBe(false);
+    expect(enter.defaultPrevented).toBe(false);
+    expect(c.querySelector("[data-rooms-input]").value).toBe("1");
+  });
+
+  it("leaves Enter / Space on native button tiles to the browser's click", () => {
+    document.body.innerHTML = `
+      <div data-rooms><button type="button" data-room="2">2</button><input type="hidden" data-rooms-input></div>`;
+    initBeds();
+    const ev = new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true });
+    document.querySelector('[data-room="2"]').dispatchEvent(ev);
+    expect(ev.defaultPrevented).toBe(false);
+    expect(document.querySelector("[data-rooms-input]").value).toBe("");
+  });
+
   it("reflects a markup-preselected tile into the hidden input on init", () => {
     const c = bedsFixture(2);
     initBeds();
