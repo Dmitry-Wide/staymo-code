@@ -290,16 +290,25 @@ export function createHeaderFx(win, bar, root, input) {
     gsap.set(field, { x: before.left - r.left, width: before.width });
     const its = items();
     const c = unionRect(its.map(box));
-    // Mobile: the item is the wordmark, which the pill would cover while it fades in, so
-    // the pill is gone by the time it arrives and the wordmark comes in after it.
     const word = isWordmark(its);
-    const back = word ? 0.5 : 0.36;
     tl = gsap.timeline();
+    if (word) {
+      // Mobile: the pill fades out on its way to the wordmark and the wordmark shows through it,
+      // one crossfade (Dmitry picked it on the prototype: no beige pill swapped for the word at the end).
+      tl.to(inner, { opacity: 0, duration: 0.12 }, 0);
+      if (c) tl.to(field, { x: c.left - r.left, width: c.width, duration: 0.5, ease: "power3.out" }, 0.04);
+      tl.to(field, { opacity: 0, duration: 0.32, ease: "power2.out" }, 0.06)
+        .to(its, { opacity: 1, x: 0, duration: 0.4, ease: "power1.inOut" }, 0.16)
+        .to(asides(), { opacity: 1, duration: 0.3 }, 0.16)
+        .set(field, { clearProps: "x,width" }, 0.54)
+        .set(inner, { clearProps: "transform" }, 0.54);
+      return;
+    }
     tl.to(inner, { opacity: 0, duration: 0.14 }, 0);
     if (c) tl.to(field, { x: c.left - r.left, width: c.width, duration: 0.45, ease: "power3.inOut" }, 0.06);
-    tl.to(its, { opacity: 1, x: 0, duration: 0.32, ease: "power2.out", stagger: { each: 0.03, from: "center" } }, back)
-      .to(asides(), { opacity: 1, duration: 0.3 }, back)
-      .to(field, word ? { opacity: 0, duration: 0.2, ease: "power1.in" } : { opacity: 0, duration: 0.22, ease: "none" }, word ? 0.3 : 0.4)
+    tl.to(its, { opacity: 1, x: 0, duration: 0.32, ease: "power2.out", stagger: { each: 0.03, from: "center" } }, 0.36)
+      .to(asides(), { opacity: 1, duration: 0.3 }, 0.36)
+      .to(field, { opacity: 0, duration: 0.22, ease: "none" }, 0.4)
       .set(field, { clearProps: "x,width" })
       .set(inner, { clearProps: "transform" });
   };
