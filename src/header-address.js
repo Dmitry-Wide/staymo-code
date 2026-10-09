@@ -252,7 +252,7 @@ export function createHeaderFx(win, bar, root, input) {
     if (tl) tl.kill();
     tl = null;
     gsap.set(ring, { opacity: 0 });
-    gsap.set(shine, { xPercent: -120 });
+    gsap.set(shine, { opacity: 0, xPercent: -120 });
     return active;
   };
 
@@ -261,7 +261,14 @@ export function createHeaderFx(win, bar, root, input) {
     const its = items();
     const c = unionRect(its.map(box));
     const r = root.getBoundingClientRect();
-    tl = gsap.timeline({ onComplete: () => gsap.set(field, { clearProps: "x,width" }) });
+    // Clear what the motion set: a leftover transform on the input box would become the
+    // containing block of the error hint (it floats under the field, absolute).
+    tl = gsap.timeline({
+      onComplete: () => {
+        gsap.set(field, { clearProps: "x,width" });
+        gsap.set(inner, { clearProps: "transform,opacity" });
+      },
+    });
     if (!mid) {
       tl.set(field, c ? { x: c.left - r.left, width: c.width, opacity: 0 } : { x: 0, opacity: 0 }, 0);
       tl.set(inner, { opacity: 0 }, 0);
@@ -278,7 +285,8 @@ export function createHeaderFx(win, bar, root, input) {
       .to(field, { x: 0, width: r.width, duration: 0.65, ease: "back.out(1.5)" }, 0.2)
       .fromTo(icon, { y: -14, opacity: 0 }, { y: 0, opacity: 1, duration: 0.55, ease: "bounce.out", immediateRender: false }, 0.5)
       .fromTo(rest, { x: -10, opacity: 0 }, { x: 0, opacity: 1, duration: 0.35, ease: "power2.out", immediateRender: false }, 0.55)
-      .fromTo(shine, { xPercent: -120 }, { xPercent: 400, duration: 0.9, ease: "power2.inOut", immediateRender: false }, 0.7)
+      .fromTo(shine, { xPercent: -120, opacity: 1 }, { xPercent: 400, duration: 0.9, ease: "power2.inOut", immediateRender: false }, 0.7)
+      .set(shine, { opacity: 0 }, 1.6)
       .fromTo(ring, { opacity: 0.9, scaleX: 1, scaleY: 1 }, { opacity: 0, scaleX: 1.06, scaleY: 1.45, duration: 0.9, ease: "power2.out", immediateRender: false }, 0.72);
   };
 
@@ -294,7 +302,8 @@ export function createHeaderFx(win, bar, root, input) {
     tl.to(its, { opacity: 1, x: 0, duration: 0.32, ease: "power2.out", stagger: { each: 0.03, from: "center" } }, 0.36)
       .to(asides(), { opacity: 1, duration: 0.3 }, 0.36)
       .to(field, { opacity: 0, duration: 0.22, ease: "none" }, 0.4)
-      .set(field, { clearProps: "x,width" });
+      .set(field, { clearProps: "x,width" })
+      .set(inner, { clearProps: "transform" });
   };
 
   return {

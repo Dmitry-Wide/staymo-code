@@ -399,6 +399,10 @@ describe("initHeaderAddress", () => {
       expect(gsap.sets.some(([t, v]) => t === ring && v.opacity === 0)).toBe(true);
       const back = gsap.timelines[1].calls.find((c) => c[0] === "to" && c[1]?.[0]?.id === "i1");
       expect(back[2]).toMatchObject({ opacity: 1, x: 0 });
+      // the shine rests hidden; the way back clears the field content's transforms
+      const shine = document.querySelector("[data-hdr-fx-glow] i");
+      expect(gsap.sets.some(([tg, v]) => tg === shine && v.opacity === 0)).toBe(true);
+      expect(gsap.timelines[1].calls.some((c) => c[0] === "set" && Array.isArray(c[1]) && c[2].clearProps === "transform")).toBe(true);
     });
 
     it("mobile: the wordmark is the menu when no item is visible", () => {
