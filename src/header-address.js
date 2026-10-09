@@ -247,7 +247,7 @@ export function createHeaderFx(win, bar, root, input) {
     return active;
   };
 
-  const toAddr = () => {
+  const toAddr = (before) => {
     const mid = stop();
     const its = items();
     const c = unionRect(its.map(box));
@@ -256,7 +256,10 @@ export function createHeaderFx(win, bar, root, input) {
     // containing block of the error hint (it floats under the field, absolute).
     // The start is set at once: the mode attribute has already shown the field, and a set
     // inside the timeline lands a frame later (one frame of the full field over the menu).
-    if (!mid) {
+    // An interrupt starts from where the pill is: its x was relative to the root's nav box,
+    // and on mobile the root's box moves with the mode (the pill ran off the screen's left edge).
+    if (mid) gsap.set(field, { x: before.left - r.left, width: before.width });
+    else {
       gsap.set(field, c ? { x: c.left - r.left, width: c.width, opacity: 0 } : { x: 0, opacity: 0 });
       gsap.set(inner, { opacity: 0 });
     }
@@ -304,7 +307,7 @@ export function createHeaderFx(win, bar, root, input) {
   return {
     // The pill's box before the mode attribute flips (mobile: the root's flex box changes).
     measure: () => field.getBoundingClientRect(),
-    play: (m, before) => (m === "addr" ? toAddr() : toNav(before)),
+    play: (m, before) => (m === "addr" ? toAddr(before) : toNav(before)),
   };
 }
 
