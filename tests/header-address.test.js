@@ -418,7 +418,7 @@ describe("initHeaderAddress", () => {
       expect(melt).toBeTruthy();
     });
 
-    it("mobile: the pill stops at its bounds, no overshoot; desktop keeps the spring", () => {
+    it("the pill stops at its bounds, no overshoot (mobile and desktop)", () => {
       const grow = (tl) => tl.calls.find((c) => c[0] === "to" && c[1] === document.querySelector(".hdr__addr__field") && "width" in c[2]);
       HTMLElement.prototype.checkVisibility = function () { return this.dataset.hdrFx !== "item"; };
       let gsap = fakeGsap();
@@ -431,7 +431,7 @@ describe("initHeaderAddress", () => {
       setup({ gsap });
       win.scrollY = 900;
       win.fire("scroll");
-      expect(grow(gsap.timelines[0])[2].ease).toMatch(/^back\.out/);
+      expect(grow(gsap.timelines[0])[2].ease).not.toMatch(/back|elastic|bounce/);
     });
 
     it("mobile, back to nav: the pill is gone before the wordmark shows (no overlap)", () => {
