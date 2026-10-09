@@ -382,8 +382,11 @@ describe("initHeaderAddress", () => {
       expect(bar.dataset.hdrMode).toBe("addr");
       const [inTl] = gsap.timelines;
       const field = document.querySelector(".hdr__addr__field");
-      const startsAt = inTl.calls.find((c) => c[0] === "set" && c[1] === field);
-      expect(startsAt[2]).toMatchObject({ opacity: 0 });
+      // the pill's start is set at once, before the next paint: a timeline set would leave
+      // one frame of the full field over the menu (the flash at the first scroll)
+      expect(inTl.calls.some((c) => c[0] === "set" && c[1] === field)).toBe(false);
+      const startsAt = gsap.sets.find(([t]) => t === field);
+      expect(startsAt[1]).toMatchObject({ opacity: 0 });
       const melt = inTl.calls.find((c) => c[0] === "to" && Array.isArray(c[1]) && c[1][0]?.id === "i1");
       expect(melt[1].map((e) => e.id)).toEqual(["i1", "i2"]);
       expect(melt[2]).toMatchObject({ opacity: 0 });
@@ -407,6 +410,21 @@ describe("initHeaderAddress", () => {
       win.fire("scroll");
       const melt = gsap.timelines[0].calls.find((c) => c[0] === "to" && c[1]?.[0]?.id === "word");
       expect(melt).toBeTruthy();
+    });
+
+    it("mobile, back to nav: the pill is gone before the wordmark shows (no overlap)", () => {
+      HTMLElement.prototype.checkVisibility = function () { return this.dataset.hdrFx !== "item"; };
+      const gsap = fakeGsap();
+      setup({ gsap });
+      win.scrollY = 900;
+      win.fire("scroll");
+      win.scrollY = 880;
+      win.fire("scroll");
+      const back = gsap.timelines[1].calls;
+      const field = document.querySelector(".hdr__addr__field");
+      const out = back.find((c) => c[0] === "to" && c[1] === field && c[2].opacity === 0);
+      const word = back.find((c) => c[0] === "to" && c[1]?.[0]?.id === "word");
+      expect(out[3] + out[2].duration).toBeLessThanOrEqual(word[3]);
     });
   });
 
