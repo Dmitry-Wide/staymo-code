@@ -17,7 +17,7 @@
    Motion («Вспышка»): with window.gsap and no reduced motion the module marks the bar
    data-hdr-fx and animates the switch — the menu items [data-hdr-fx="item"] melt into a
    pill at their place, the pill glides to the field and the field's content comes in
-   (marker bounce); back the same way. [data-hdr-fx="aside"] only fades;
+   (the marker fades in); back the same way. [data-hdr-fx="aside"] only fades;
    [data-hdr-fx="logo"]'s last child is the menu on mobile (the wordmark). CSS keeps the
    end states (visibility) either way; without the attribute it fades as before.
    dataLayer: header_address_focus, header_address_geo, header_address_submit,
@@ -274,7 +274,7 @@ export function createHeaderFx(win, bar, root, input) {
       .to(asides(), { opacity: 0, duration: 0.2 }, 0)
       .to(field, { opacity: 1, duration: 0.2, ease: "none" }, 0.06)
       .to(field, { x: 0, width: r.width, duration: 0.65, ease: "back.out(1.5)" }, 0.2)
-      .fromTo(icon, { y: -14, opacity: 0 }, { y: 0, opacity: 1, duration: 0.55, ease: "bounce.out", immediateRender: false }, 0.5)
+      .fromTo(icon, { opacity: 0 }, { opacity: 1, duration: 0.4, ease: "power1.out", immediateRender: false }, 0.5)
       .fromTo(rest, { x: -10, opacity: 0 }, { x: 0, opacity: 1, duration: 0.35, ease: "power2.out", immediateRender: false }, 0.55);
   };
 
