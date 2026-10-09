@@ -434,6 +434,27 @@ describe("initHeaderAddress", () => {
       expect(grow(gsap.timelines[0])[2].ease).not.toMatch(/back|elastic|bounce/);
     });
 
+    it("an interrupt back to addr starts from where the pill is (mobile: the root's box moves)", () => {
+      HTMLElement.prototype.checkVisibility = function () { return this.dataset.hdrFx !== "item"; };
+      const gsap = fakeGsap();
+      setup({ gsap });
+      win.scrollY = 900;
+      win.fire("scroll");
+      win.scrollY = 880;
+      win.fire("scroll");
+      // mid-way back: the pill over the wordmark (48–142), the root in its addr box (55–320)
+      const field = document.querySelector(".hdr__addr__field");
+      field.getBoundingClientRect = () => ({ left: 48, right: 142, width: 94 });
+      root.getBoundingClientRect = () => ({ left: 55, right: 320, width: 265 });
+      gsap.sets.length = 0;
+      win.scrollY = 1200;
+      win.fire("scroll");
+      expect(bar.dataset.hdrMode).toBe("addr");
+      expect(gsap.timelines[1].killed).toBe(true);
+      const start = gsap.sets.find(([t]) => t === field);
+      expect(start[1]).toMatchObject({ x: -7, width: 94 });
+    });
+
     it("mobile, back to nav: the pill is gone before the wordmark shows (no overlap)", () => {
       HTMLElement.prototype.checkVisibility = function () { return this.dataset.hdrFx !== "item"; };
       const gsap = fakeGsap();
