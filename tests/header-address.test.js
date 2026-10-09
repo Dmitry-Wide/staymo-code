@@ -200,7 +200,7 @@ describe("initHeaderAddress", () => {
             clear ? `<button type="button" data-hdr-addr-clear aria-label="Clear address">×</button>` : ""
           }</div>
           <input type="hidden" data-input-id="postal-code-result">
-          <div data-hdr-addr-menu><button data-hdr-addr-geo>Use my current location</button></div>
+          <div data-hdr-addr-menu><button data-hdr-addr-geo><i></i><span data-hdr-addr-geo-label>Use my current location</span></button></div>
         </div>
         <div data-hdr-addr-submit><a href="/start-hosting" id="go">Get Started</a></div>
       </div>
@@ -787,23 +787,50 @@ describe("initHeaderAddress", () => {
       ["unavailable", { getCurrentPosition: (ok, err) => err({ code: 3 }) }, null, MSG_UNAVAILABLE],
       ["outside_uk", geoOk(), [{ formatted_address: "Paris", address_components: [{ short_name: "FR", types: ["country"] }] }], MSG_OUTSIDE_UK],
       ["unavailable", geoOk(), [], MSG_UNAVAILABLE],
-    ])("%s → message", async (result, geo, res, msg) => {
+    ])("%s → message in the menu row", async (result, geo, res, msg) => {
       setup({ geo });
       win.staymoShowAddrError = vi.fn();
       if (res) win.google = mapsWith(res, res.length ? "OK" : "ZERO_RESULTS");
+      input.focus();
       $("[data-hdr-addr-geo]").click();
       await vi.advanceTimersByTimeAsync(0);
-      expect(win.staymoShowAddrError).toHaveBeenCalledWith(input, msg);
+      const label = $("[data-hdr-addr-geo-label]");
+      expect(label.textContent).toBe(msg);
+      expect(root.dataset.geo).toBe("error");
+      expect(root.dataset.menu).toBe("open");
+      expect(win.staymoShowAddrError).not.toHaveBeenCalled();
       expect(win.dataLayer).toContainEqual({ event: "header_address_geo", result });
+      // typing closes the menu and brings the label back
+      input.value = "1";
+      input.dispatchEvent(new Event("input"));
       expect(root.hasAttribute("data-geo")).toBe(false);
+      expect(label.textContent).toBe("Use my current location");
+    });
+
+    it("keeps the menu open while locating", async () => {
+      setup({ geo: geoOk() });
+      input.focus();
+      $("[data-hdr-addr-geo]").click();
+      expect(root.dataset.geo).toBe("loading");
+      expect(root.dataset.menu).toBe("open");
+    });
+
+    it("without a label element the hint under the field takes the message", async () => {
+      setup({ geo: { getCurrentPosition: (ok, err) => err({ code: 1 }) } });
+      $("[data-hdr-addr-geo-label]").remove();
+      win.staymoShowAddrError = vi.fn();
+      // the module read the label at init; a fresh init sees none
+      document.body.innerHTML = document.body.innerHTML;
+      const api = initHeaderAddress(win, document);
+      await api.useLocation();
+      expect(win.staymoShowAddrError).toHaveBeenCalledWith(document.querySelector("[data-hdr-addr] [data-input-id=address-search]"), MSG_DENIED);
     });
 
     it("gives up when Maps never loads", async () => {
       setup({ geo: geoOk() });
-      win.staymoShowAddrError = vi.fn();
       $("[data-hdr-addr-geo]").click();
       await vi.advanceTimersByTimeAsync(10500);
-      expect(win.staymoShowAddrError).toHaveBeenCalledWith(input, MSG_UNAVAILABLE);
+      expect($("[data-hdr-addr-geo-label]").textContent).toBe(MSG_UNAVAILABLE);
     });
 
     it("events carry no address or postcode", async () => {

@@ -3,8 +3,9 @@
    - .hdr[data-hdr-bar] — gets data-hdr-mode="addr"|"nav" (CSS does the rest).
    - [data-hdr-addr][data-form-type="header-address"] — root; holds
      [data-input-id="address-search"], hidden [data-input-id="postal-code-result"],
-     [data-hdr-addr-menu] and button[data-hdr-addr-geo]. Gets data-menu="open"
-     and data-geo="loading".
+     [data-hdr-addr-menu] and button[data-hdr-addr-geo] (its [data-hdr-addr-geo-label]
+     shows a geolocation failure in place of the label). Gets data-menu="open" and
+     data-geo="loading" | "error".
    - button[data-hdr-addr-clear] (optional, inside .hdr__addr__field) — empties the
      field, the postcode and sessionStorage; CSS hides it while the field is empty.
    - [data-hdr-addr-submit] — wraps the header's Get Started link.
@@ -323,6 +324,8 @@ export function initHeaderAddress(win = window, doc = document) {
   const menu = root.querySelector("[data-hdr-addr-menu]");
   const geoButton = root.querySelector("[data-hdr-addr-geo]");
   const clearButton = root.querySelector("[data-hdr-addr-clear]");
+  const geoLabel = geoButton && geoButton.querySelector("[data-hdr-addr-geo-label]");
+  const geoText = geoLabel ? geoLabel.textContent : "";
   const bar = root.closest("[data-hdr-bar]") || doc.querySelector("[data-hdr-bar]");
   const html = doc.documentElement;
   const storage = (() => {
@@ -412,9 +415,16 @@ export function initHeaderAddress(win = window, doc = document) {
     menuOpen = true;
     root.setAttribute("data-menu", "open");
   };
+  // A geolocation failure lives in the menu row until the menu closes (typing, Escape, blur).
+  const clearGeoError = () => {
+    if (root.getAttribute("data-geo") !== "error") return;
+    root.removeAttribute("data-geo");
+    if (geoLabel) geoLabel.textContent = geoText;
+  };
   const closeMenu = () => {
     menuOpen = false;
     root.removeAttribute("data-menu");
+    clearGeoError();
     schedule();
   };
 
@@ -476,15 +486,19 @@ export function initHeaderAddress(win = window, doc = document) {
   const geoFail = (result) => {
     const msg = result === "outside_uk" ? MSG_OUTSIDE_UK : result === "denied" ? MSG_DENIED : MSG_UNAVAILABLE;
     dataLayer.push({ event: "header_address_geo", result });
-    if (typeof win.staymoShowAddrError === "function") win.staymoShowAddrError(input, msg);
+    if (geoLabel && menu) {
+      root.setAttribute("data-geo", "error");
+      geoLabel.textContent = msg;
+      openMenu();
+    } else if (typeof win.staymoShowAddrError === "function") win.staymoShowAddrError(input, msg);
   };
 
   const useLocation = async () => {
     const geolocation = win.navigator?.geolocation;
     if (geoBusy || !geolocation) return;
     geoBusy = true;
-    root.setAttribute("data-geo", "loading");
-    closeMenu();
+    clearGeoError();
+    root.setAttribute("data-geo", "loading"); // the menu stays open: its row spins
     try {
       let pos;
       try {
@@ -502,12 +516,14 @@ export function initHeaderAddress(win = window, doc = document) {
       }
       const picked = pickGeoFill(results, accuracy);
       if (picked.error) return geoFail(picked.error);
+      if (root.getAttribute("data-geo") === "loading") root.removeAttribute("data-geo");
+      closeMenu();
       fillInputs(picked.address, picked.postal, "geo");
       dataLayer.push({ event: "header_address_geo", result: picked.result });
       input.focus();
     } finally {
       geoBusy = false;
-      root.removeAttribute("data-geo");
+      if (root.getAttribute("data-geo") === "loading") root.removeAttribute("data-geo");
       schedule();
     }
   };
