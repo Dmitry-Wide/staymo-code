@@ -455,7 +455,7 @@ describe("initHeaderAddress", () => {
       expect(start[1]).toMatchObject({ x: -7, width: 94 });
     });
 
-    it("mobile, back to nav: the pill is gone before the wordmark shows (no overlap)", () => {
+    it("mobile, back to nav: the pill fades on its way and the wordmark shows through it (one crossfade)", () => {
       HTMLElement.prototype.checkVisibility = function () { return this.dataset.hdrFx !== "item"; };
       const gsap = fakeGsap();
       setup({ gsap });
@@ -467,7 +467,12 @@ describe("initHeaderAddress", () => {
       const field = document.querySelector(".hdr__addr__field");
       const out = back.find((c) => c[0] === "to" && c[1] === field && c[2].opacity === 0);
       const word = back.find((c) => c[0] === "to" && c[1]?.[0]?.id === "word");
-      expect(out[3] + out[2].duration).toBeLessThanOrEqual(word[3]);
+      // the pill starts fading at once, the wordmark comes in while it is still fading
+      expect(out[3]).toBeLessThanOrEqual(0.1);
+      expect(word[3]).toBeGreaterThan(out[3]);
+      expect(word[3]).toBeLessThan(out[3] + out[2].duration);
+      // no beige pill held to the end: it is gone before the wordmark is fully in
+      expect(out[3] + out[2].duration).toBeLessThan(word[3] + word[2].duration);
     });
   });
 
