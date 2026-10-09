@@ -252,16 +252,18 @@ export function createHeaderFx(win, bar, root, input) {
     const r = root.getBoundingClientRect();
     // Clear what the motion set: a leftover transform on the input box would become the
     // containing block of the error hint (it floats under the field, absolute).
+    // The start is set at once: the mode attribute has already shown the field, and a set
+    // inside the timeline lands a frame later (one frame of the full field over the menu).
+    if (!mid) {
+      gsap.set(field, c ? { x: c.left - r.left, width: c.width, opacity: 0 } : { x: 0, opacity: 0 });
+      gsap.set(inner, { opacity: 0 });
+    }
     tl = gsap.timeline({
       onComplete: () => {
         gsap.set(field, { clearProps: "x,width" });
         gsap.set(inner, { clearProps: "transform,opacity" });
       },
     });
-    if (!mid) {
-      tl.set(field, c ? { x: c.left - r.left, width: c.width, opacity: 0 } : { x: 0, opacity: 0 }, 0);
-      tl.set(inner, { opacity: 0 }, 0);
-    }
     tl.to(its, {
       opacity: 0,
       x: (i, el) => (c ? (c.cx - (box(el).left + box(el).right) / 2) * 0.3 : 0),
@@ -282,12 +284,16 @@ export function createHeaderFx(win, bar, root, input) {
     gsap.set(field, { x: before.left - r.left, width: before.width });
     const its = items();
     const c = unionRect(its.map(box));
+    // Mobile: the item is the wordmark, which the pill would cover while it fades in, so
+    // the pill is gone by the time it arrives and the wordmark comes in after it.
+    const word = its.length === 1 && its[0].parentElement && its[0].parentElement.dataset.hdrFx === "logo";
+    const back = word ? 0.5 : 0.36;
     tl = gsap.timeline();
     tl.to(inner, { opacity: 0, duration: 0.14 }, 0);
     if (c) tl.to(field, { x: c.left - r.left, width: c.width, duration: 0.45, ease: "power3.inOut" }, 0.06);
-    tl.to(its, { opacity: 1, x: 0, duration: 0.32, ease: "power2.out", stagger: { each: 0.03, from: "center" } }, 0.36)
-      .to(asides(), { opacity: 1, duration: 0.3 }, 0.36)
-      .to(field, { opacity: 0, duration: 0.22, ease: "none" }, 0.4)
+    tl.to(its, { opacity: 1, x: 0, duration: 0.32, ease: "power2.out", stagger: { each: 0.03, from: "center" } }, back)
+      .to(asides(), { opacity: 1, duration: 0.3 }, back)
+      .to(field, word ? { opacity: 0, duration: 0.2, ease: "power1.in" } : { opacity: 0, duration: 0.22, ease: "none" }, word ? 0.3 : 0.4)
       .set(field, { clearProps: "x,width" })
       .set(inner, { clearProps: "transform" });
   };
