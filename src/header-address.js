@@ -10,8 +10,15 @@
    - [data-hdr-addr-submit] — wraps the header's Get Started link.
    Google Places, validation and error hints come from the site-wide inline code:
    window.staymoValidateAddress / staymoShowAddrError / staymoClearAddrError.
-   Mode: "addr" once the hero form (or, without one, the first screen) is scrolled
-   past, "nav" when scrolling back up; never leaves "addr" while the field is in use.
+   Mode: "addr" once the hero form is scrolled past (without one: at the first scroll
+   down, NO_HERO_OFFSET), "nav" when scrolling back up; never leaves "addr" while the
+   field is in use.
+   Motion («Вспышка»): with window.gsap and no reduced motion the module marks the bar
+   data-hdr-fx and animates the switch — the menu items [data-hdr-fx="item"] melt into a
+   pill at their place, the pill glides to the field and the field's content comes in
+   (marker bounce, shine, ring); back the same way. [data-hdr-fx="aside"] only fades;
+   [data-hdr-fx="logo"]'s last child is the menu on mobile (the wordmark). CSS keeps the
+   end states (visibility) either way; without the attribute it fades as before.
    dataLayer: header_address_focus, header_address_geo, header_address_submit,
    header_address_clear.
    Picking a Google suggestion submits at once (all widths); typed text waits for
@@ -25,6 +32,7 @@
 export const STORAGE_KEY = "staymo_address";
 export const STORAGE_TTL_MS = 30 * 60 * 1000;
 export const SCROLL_HYSTERESIS = 8;
+export const NO_HERO_OFFSET = 24;
 export const PRECISE_ACCURACY_M = 100;
 export const GEO_OPTIONS = { enableHighAccuracy: true, timeout: 10000, maximumAge: 60000 };
 export const MSG_OUTSIDE_UK = "Looks like you're outside the UK — type the property address";
@@ -184,6 +192,118 @@ function isVisible(el) {
   return el.getClientRects().length > 0;
 }
 
+// Bounding box of several rects ({left, right, top, bottom}); null for none.
+export function unionRect(rects) {
+  const list = (rects || []).filter((r) => r && r.right > r.left);
+  if (!list.length) return null;
+  const left = Math.min(...list.map((r) => r.left));
+  const right = Math.max(...list.map((r) => r.right));
+  return { left, right, width: right - left, cx: (left + right) / 2 };
+}
+
+// --- Mode switch motion («Вспышка») ---
+// The pill is the field itself (.hdr__addr__field: the root's child holding the input):
+// it starts at the menu's box and springs to the root's box, FLIP-style, so the same code
+// serves the centred desktop field and the mobile flex item. Transform/opacity, plus the
+// width of that one element. Interrupts start from where the pill is.
+export function createHeaderFx(win, bar, root, input) {
+  const gsap = win.gsap;
+  if (!bar || !gsap || typeof gsap.timeline !== "function") return null;
+  const mq = typeof win.matchMedia === "function" ? win.matchMedia("(prefers-reduced-motion: reduce)") : null;
+  if (mq && mq.matches) return null;
+  let field = input;
+  while (field.parentElement && field.parentElement !== root) field = field.parentElement;
+  if (field === input || !field.parentElement) return null;
+  const doc = root.ownerDocument;
+  const inner = [...field.children].filter((el) => !(el.tagName === "INPUT" && el.type === "hidden"));
+  const icon = inner[0];
+  const rest = inner.slice(1);
+  const glow = doc.createElement("span");
+  glow.setAttribute("data-hdr-fx-glow", "");
+  glow.setAttribute("aria-hidden", "true");
+  const shine = doc.createElement("i");
+  glow.appendChild(shine);
+  const ring = doc.createElement("span");
+  ring.setAttribute("data-hdr-fx-ring", "");
+  ring.setAttribute("aria-hidden", "true");
+  field.append(glow, ring);
+  bar.setAttribute("data-hdr-fx", "");
+
+  // Shown items only: on mobile the menu sits in the closed drawer (laid out, visibility:hidden).
+  const shown = (el) =>
+    typeof el.checkVisibility === "function" ? el.checkVisibility({ visibilityProperty: true }) : isVisible(el);
+  const visible = (els) => els.filter(shown);
+  const items = () => {
+    const desk = visible([...bar.querySelectorAll('[data-hdr-fx="item"]')]);
+    if (desk.length) return desk;
+    const [logo] = visible([...bar.querySelectorAll('[data-hdr-fx="logo"]')]);
+    return logo && logo.lastElementChild && logo.children.length > 1 ? [logo.lastElementChild] : [];
+  };
+  const asides = () => visible([...bar.querySelectorAll('[data-hdr-fx="aside"]')]);
+  // Boxes without the motion's own x shift.
+  const box = (el) => {
+    const r = el.getBoundingClientRect();
+    const x = Number(gsap.getProperty(el, "x")) || 0;
+    return { left: r.left - x, right: r.right - x };
+  };
+  let tl = null;
+  const stop = () => {
+    const active = Boolean(tl && tl.isActive());
+    if (tl) tl.kill();
+    tl = null;
+    gsap.set(ring, { opacity: 0 });
+    gsap.set(shine, { xPercent: -120 });
+    return active;
+  };
+
+  const toAddr = () => {
+    const mid = stop();
+    const its = items();
+    const c = unionRect(its.map(box));
+    const r = root.getBoundingClientRect();
+    tl = gsap.timeline({ onComplete: () => gsap.set(field, { clearProps: "x,width" }) });
+    if (!mid) {
+      tl.set(field, c ? { x: c.left - r.left, width: c.width, opacity: 0 } : { x: 0, opacity: 0 }, 0);
+      tl.set(inner, { opacity: 0 }, 0);
+    }
+    tl.to(its, {
+      opacity: 0,
+      x: (i, el) => (c ? (c.cx - (box(el).left + box(el).right) / 2) * 0.3 : 0),
+      duration: 0.26,
+      ease: "power2.in",
+      stagger: { each: 0.03, from: "edges" },
+    }, 0)
+      .to(asides(), { opacity: 0, duration: 0.2 }, 0)
+      .to(field, { opacity: 1, duration: 0.2, ease: "none" }, 0.06)
+      .to(field, { x: 0, width: r.width, duration: 0.65, ease: "back.out(1.5)" }, 0.2)
+      .fromTo(icon, { y: -14, opacity: 0 }, { y: 0, opacity: 1, duration: 0.55, ease: "bounce.out", immediateRender: false }, 0.5)
+      .fromTo(rest, { x: -10, opacity: 0 }, { x: 0, opacity: 1, duration: 0.35, ease: "power2.out", immediateRender: false }, 0.55)
+      .fromTo(shine, { xPercent: -120 }, { xPercent: 400, duration: 0.9, ease: "power2.inOut", immediateRender: false }, 0.7)
+      .fromTo(ring, { opacity: 0.9, scaleX: 1, scaleY: 1 }, { opacity: 0, scaleX: 1.06, scaleY: 1.45, duration: 0.9, ease: "power2.out", immediateRender: false }, 0.72);
+  };
+
+  const toNav = (before) => {
+    stop();
+    const r = root.getBoundingClientRect();
+    gsap.set(field, { x: before.left - r.left, width: before.width });
+    const its = items();
+    const c = unionRect(its.map(box));
+    tl = gsap.timeline();
+    tl.to(inner, { opacity: 0, duration: 0.14 }, 0);
+    if (c) tl.to(field, { x: c.left - r.left, width: c.width, duration: 0.45, ease: "power3.inOut" }, 0.06);
+    tl.to(its, { opacity: 1, x: 0, duration: 0.32, ease: "power2.out", stagger: { each: 0.03, from: "center" } }, 0.36)
+      .to(asides(), { opacity: 1, duration: 0.3 }, 0.36)
+      .to(field, { opacity: 0, duration: 0.22, ease: "none" }, 0.4)
+      .set(field, { clearProps: "x,width" });
+  };
+
+  return {
+    // The pill's box before the mode attribute flips (mobile: the root's flex box changes).
+    measure: () => field.getBoundingClientRect(),
+    play: (m, before) => (m === "addr" ? toAddr() : toNav(before)),
+  };
+}
+
 export function initHeaderAddress(win = window, doc = document) {
   const root = doc.querySelector('[data-hdr-addr][data-form-type="header-address"]');
   if (!root) return null;
@@ -228,12 +348,16 @@ export function initHeaderAddress(win = window, doc = document) {
       const hdrBottom = bar ? bar.getBoundingClientRect().bottom : 0;
       return hero.getBoundingClientRect().bottom < hdrBottom;
     }
-    return win.scrollY > win.innerHeight;
+    return win.scrollY > NO_HERO_OFFSET;
   };
 
-  const setMode = (m) => {
+  const fx = createHeaderFx(win, bar, root, input);
+
+  const setMode = (m, animate = true) => {
+    const before = fx && animate ? fx.measure() : null;
     mode = m;
     if (bar) bar.setAttribute("data-hdr-mode", m);
+    if (before) fx.play(m, before);
   };
 
   const update = () => {
@@ -255,7 +379,7 @@ export function initHeaderAddress(win = window, doc = document) {
     (win.requestAnimationFrame || ((cb) => setTimeout(cb, 16)))(update);
   };
 
-  setMode("nav");
+  setMode("nav", false);
   schedule(); // page restored mid-scroll
   win.addEventListener("scroll", schedule, { passive: true });
   win.addEventListener("resize", () => {
