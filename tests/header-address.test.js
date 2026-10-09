@@ -354,7 +354,6 @@ describe("initHeaderAddress", () => {
     it("off without GSAP: no data-hdr-fx, CSS fades as before", () => {
       setup();
       expect(bar.hasAttribute("data-hdr-fx")).toBe(false);
-      expect(document.querySelector("[data-hdr-fx-ring]")).toBe(null);
     });
 
     it("off with reduced motion", () => {
@@ -366,13 +365,12 @@ describe("initHeaderAddress", () => {
       expect(gsap.timelines.length).toBe(0);
     });
 
-    it("marks the bar, adds shine and ring to the field, no motion on load", () => {
+    it("marks the bar, adds nothing to the field (no shine, no ring), no motion on load", () => {
       const gsap = fakeGsap();
       setup({ gsap });
       expect(bar.hasAttribute("data-hdr-fx")).toBe(true);
       const field = document.querySelector(".hdr__addr__field");
-      expect(field.querySelector("[data-hdr-fx-glow] i")).not.toBe(null);
-      expect(field.lastElementChild.hasAttribute("data-hdr-fx-ring")).toBe(true);
+      expect(field.querySelector("[data-hdr-fx-glow], [data-hdr-fx-ring]")).toBe(null);
       expect(gsap.timelines.length).toBe(0);
     });
 
@@ -395,13 +393,9 @@ describe("initHeaderAddress", () => {
       win.fire("scroll");
       expect(bar.dataset.hdrMode).toBe("nav");
       expect(inTl.killed).toBe(true);
-      const ring = document.querySelector("[data-hdr-fx-ring]");
-      expect(gsap.sets.some(([t, v]) => t === ring && v.opacity === 0)).toBe(true);
       const back = gsap.timelines[1].calls.find((c) => c[0] === "to" && c[1]?.[0]?.id === "i1");
       expect(back[2]).toMatchObject({ opacity: 1, x: 0 });
-      // the shine rests hidden; the way back clears the field content's transforms
-      const shine = document.querySelector("[data-hdr-fx-glow] i");
-      expect(gsap.sets.some(([tg, v]) => tg === shine && v.opacity === 0)).toBe(true);
+      // the way back clears the field content's transforms
       expect(gsap.timelines[1].calls.some((c) => c[0] === "set" && Array.isArray(c[1]) && c[2].clearProps === "transform")).toBe(true);
     });
 
