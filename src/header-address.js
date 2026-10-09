@@ -204,7 +204,7 @@ export function unionRect(rects) {
 
 // --- Mode switch motion («Вспышка») ---
 // The pill is the field itself (.hdr__addr__field: the root's child holding the input):
-// it starts at the menu's box and springs to the root's box, FLIP-style, so the same code
+// it starts at the menu's box and glides to the root's box, FLIP-style, so the same code
 // serves the centred desktop field and the mobile flex item. Transform/opacity, plus the
 // width of that one element. Interrupts start from where the pill is.
 export function createHeaderFx(win, bar, root, input) {
@@ -231,6 +231,8 @@ export function createHeaderFx(win, bar, root, input) {
     return logo && logo.lastElementChild && logo.children.length > 1 ? [logo.lastElementChild] : [];
   };
   const asides = () => visible([...bar.querySelectorAll('[data-hdr-fx="aside"]')]);
+  // Mobile: the only item is the logo's wordmark.
+  const isWordmark = (its) => its.length === 1 && Boolean(its[0].parentElement) && its[0].parentElement.dataset.hdrFx === "logo";
   // Boxes without the motion's own x shift.
   const box = (el) => {
     const r = el.getBoundingClientRect();
@@ -273,7 +275,8 @@ export function createHeaderFx(win, bar, root, input) {
     }, 0)
       .to(asides(), { opacity: 0, duration: 0.2 }, 0)
       .to(field, { opacity: 1, duration: 0.2, ease: "none" }, 0.06)
-      .to(field, { x: 0, width: r.width, duration: 0.65, ease: "back.out(1.5)" }, 0.2)
+      // No spring: an overshoot runs the pill past its bounds (into the menu button on mobile) and back.
+      .to(field, { x: 0, width: r.width, duration: 0.65, ease: "power3.out" }, 0.2)
       .fromTo(icon, { opacity: 0 }, { opacity: 1, duration: 0.4, ease: "power1.out", immediateRender: false }, 0.5)
       .fromTo(rest, { x: -10, opacity: 0 }, { x: 0, opacity: 1, duration: 0.35, ease: "power2.out", immediateRender: false }, 0.55);
   };
@@ -286,7 +289,7 @@ export function createHeaderFx(win, bar, root, input) {
     const c = unionRect(its.map(box));
     // Mobile: the item is the wordmark, which the pill would cover while it fades in, so
     // the pill is gone by the time it arrives and the wordmark comes in after it.
-    const word = its.length === 1 && its[0].parentElement && its[0].parentElement.dataset.hdrFx === "logo";
+    const word = isWordmark(its);
     const back = word ? 0.5 : 0.36;
     tl = gsap.timeline();
     tl.to(inner, { opacity: 0, duration: 0.14 }, 0);
