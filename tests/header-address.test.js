@@ -382,6 +382,12 @@ describe("initHeaderAddress", () => {
       expect(bar.dataset.hdrMode).toBe("addr");
       const [inTl] = gsap.timelines;
       const field = document.querySelector(".hdr__addr__field");
+      // the marker only fades in, no drop and no bounce
+      const ico = document.querySelector(".hdr__addr__field").firstElementChild;
+      const icoIn = inTl.calls.find((c) => c[0] === "fromTo" && c[1] === ico);
+      expect(icoIn[2]).toEqual({ opacity: 0 });
+      expect(icoIn[3].ease).not.toMatch(/bounce|back|elastic/);
+      expect(icoIn[3].y).toBeUndefined();
       // the pill's start is set at once, before the next paint: a timeline set would leave
       // one frame of the full field over the menu (the flash at the first scroll)
       expect(inTl.calls.some((c) => c[0] === "set" && c[1] === field)).toBe(false);
