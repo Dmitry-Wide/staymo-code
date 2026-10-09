@@ -17,7 +17,7 @@
    Motion («Вспышка»): with window.gsap and no reduced motion the module marks the bar
    data-hdr-fx and animates the switch — the menu items [data-hdr-fx="item"] melt into a
    pill at their place, the pill glides to the field and the field's content comes in
-   (marker bounce, shine, ring); back the same way. [data-hdr-fx="aside"] only fades;
+   (marker bounce, shine); back the same way. [data-hdr-fx="aside"] only fades;
    [data-hdr-fx="logo"]'s last child is the menu on mobile (the wordmark). CSS keeps the
    end states (visibility) either way; without the attribute it fades as before.
    dataLayer: header_address_focus, header_address_geo, header_address_submit,
@@ -224,10 +224,7 @@ export function createHeaderFx(win, bar, root, input) {
   glow.setAttribute("aria-hidden", "true");
   const shine = doc.createElement("i");
   glow.appendChild(shine);
-  const ring = doc.createElement("span");
-  ring.setAttribute("data-hdr-fx-ring", "");
-  ring.setAttribute("aria-hidden", "true");
-  field.append(glow, ring);
+  field.append(glow);
   bar.setAttribute("data-hdr-fx", "");
 
   // Shown items only: on mobile the menu sits in the closed drawer (laid out, visibility:hidden).
@@ -252,7 +249,6 @@ export function createHeaderFx(win, bar, root, input) {
     const active = Boolean(tl && tl.isActive());
     if (tl) tl.kill();
     tl = null;
-    gsap.set(ring, { opacity: 0 });
     gsap.set(shine, { opacity: 0, xPercent: -120 });
     return active;
   };
@@ -287,8 +283,7 @@ export function createHeaderFx(win, bar, root, input) {
       .fromTo(icon, { y: -14, opacity: 0 }, { y: 0, opacity: 1, duration: 0.55, ease: "bounce.out", immediateRender: false }, 0.5)
       .fromTo(rest, { x: -10, opacity: 0 }, { x: 0, opacity: 1, duration: 0.35, ease: "power2.out", immediateRender: false }, 0.55)
       .fromTo(shine, { xPercent: -120, opacity: 1 }, { xPercent: 400, duration: 0.9, ease: "power2.inOut", immediateRender: false }, 0.7)
-      .set(shine, { opacity: 0 }, 1.6)
-      .fromTo(ring, { opacity: 0.9, scaleX: 1, scaleY: 1 }, { opacity: 0, scaleX: 1.06, scaleY: 1.45, duration: 0.9, ease: "power2.out", immediateRender: false }, 0.72);
+      .set(shine, { opacity: 0 }, 1.6);
   };
 
   const toNav = (before) => {
