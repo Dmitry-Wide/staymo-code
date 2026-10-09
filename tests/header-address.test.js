@@ -8,6 +8,8 @@ import {
   decideMode,
   pickGeoFill,
   initHeaderAddress,
+  unionRect,
+  NO_HERO_OFFSET,
   STORAGE_KEY,
   MSG_OUTSIDE_UK,
   MSG_DENIED,
@@ -154,13 +156,45 @@ describe("pure helpers", () => {
   });
 });
 
+describe("unionRect", () => {
+  it("boxes several rects, skips empty ones", () => {
+    expect(unionRect([{ left: 10, right: 50 }, { left: 80, right: 120 }, { left: 0, right: 0 }])).toEqual({
+      left: 10, right: 120, width: 110, cx: 65,
+    });
+    expect(unionRect([])).toBe(null);
+  });
+});
+
+// A recording stand-in for GSAP: timelines log their calls, kill() is observable.
+function fakeGsap() {
+  const timelines = [];
+  const sets = [];
+  return {
+    timelines,
+    sets,
+    timeline() {
+      const tl = { calls: [], killed: false };
+      ["set", "to", "fromTo"].forEach((m) => (tl[m] = (...a) => (tl.calls.push([m, ...a]), tl)));
+      tl.isActive = () => !tl.killed;
+      tl.kill = () => (tl.killed = true);
+      timelines.push(tl);
+      return tl;
+    },
+    set: (target, vars) => sets.push([target, vars]),
+    getProperty: () => 0,
+  };
+}
+
 describe("initHeaderAddress", () => {
   let store, win, input, postal, root, bar, assign;
   const $ = (s) => document.querySelector(s);
 
-  function setup({ hero = false, storage = memStore(), geo, clear = false, hidden = false } = {}) {
+  function setup({ hero = false, storage = memStore(), geo, clear = false, hidden = false, gsap, reduce = false } = {}) {
     document.body.innerHTML = `
       <div class="hdr" data-hdr-bar>
+        <a data-hdr-fx="logo"><i>icon</i><i id="word">Staymo</i></a>
+        <nav><a data-hdr-fx="item" id="i1">Locations</a><a data-hdr-fx="item" id="i2">Pricing</a></nav>
+        <a data-hdr-fx="aside" id="login">Log in</a>
         <div data-hdr-addr data-form-type="header-address">
           <div class="hdr__addr__field"><input data-input-id="address-search">${
             clear ? `<button type="button" data-hdr-addr-clear aria-label="Clear address">×</button>` : ""
@@ -185,7 +219,8 @@ describe("initHeaderAddress", () => {
       dataLayer: undefined,
       navigator: geo === null ? {} : { geolocation: geo || { getCurrentPosition: vi.fn() } },
       location: { pathname: "/blog/a", search: "?utm_source=x&foo=1", assign },
-      matchMedia: () => ({ matches: false }), // desktop width: picks still submit
+      matchMedia: (q) => ({ matches: reduce && q.includes("reduce") }),
+      gsap,
       requestAnimationFrame: (cb) => cb(),
       MutationObserver: window.MutationObserver,
       getComputedStyle: (el) => window.getComputedStyle(el),
@@ -250,7 +285,20 @@ describe("initHeaderAddress", () => {
     });
   });
 
-  it("starts in nav and switches on scroll past the first screen (no hero)", () => {
+  it("no hero: switches at the first scroll down, back to nav at the top", () => {
+    setup();
+    win.scrollY = NO_HERO_OFFSET;
+    win.fire("scroll");
+    expect(bar.dataset.hdrMode).toBe("nav");
+    win.scrollY = NO_HERO_OFFSET + 1;
+    win.fire("scroll");
+    expect(bar.dataset.hdrMode).toBe("addr");
+    win.scrollY = 0;
+    win.fire("scroll");
+    expect(bar.dataset.hdrMode).toBe("nav");
+  });
+
+  it("starts in nav and follows the scroll direction (no hero)", () => {
     setup();
     expect(bar.dataset.hdrMode).toBe("nav");
     win.scrollY = 900;
@@ -293,12 +341,83 @@ describe("initHeaderAddress", () => {
     }
   });
 
+  describe("motion", () => {
+    let orig;
+    beforeEach(() => {
+      orig = HTMLElement.prototype.checkVisibility;
+      HTMLElement.prototype.checkVisibility = function () { return true; };
+    });
+    afterEach(() => {
+      if (orig) HTMLElement.prototype.checkVisibility = orig; else delete HTMLElement.prototype.checkVisibility;
+    });
+
+    it("off without GSAP: no data-hdr-fx, CSS fades as before", () => {
+      setup();
+      expect(bar.hasAttribute("data-hdr-fx")).toBe(false);
+      expect(document.querySelector("[data-hdr-fx-ring]")).toBe(null);
+    });
+
+    it("off with reduced motion", () => {
+      const gsap = fakeGsap();
+      setup({ gsap, reduce: true });
+      expect(bar.hasAttribute("data-hdr-fx")).toBe(false);
+      win.scrollY = 900;
+      win.fire("scroll");
+      expect(gsap.timelines.length).toBe(0);
+    });
+
+    it("marks the bar, adds shine and ring to the field, no motion on load", () => {
+      const gsap = fakeGsap();
+      setup({ gsap });
+      expect(bar.hasAttribute("data-hdr-fx")).toBe(true);
+      const field = document.querySelector(".hdr__addr__field");
+      expect(field.querySelector("[data-hdr-fx-glow] i")).not.toBe(null);
+      expect(field.lastElementChild.hasAttribute("data-hdr-fx-ring")).toBe(true);
+      expect(gsap.timelines.length).toBe(0);
+    });
+
+    it("addr: the menu items melt, the pill starts at their box; nav: back; an interrupt kills and resets", () => {
+      const gsap = fakeGsap();
+      setup({ gsap });
+      win.scrollY = 900;
+      win.fire("scroll");
+      expect(bar.dataset.hdrMode).toBe("addr");
+      const [inTl] = gsap.timelines;
+      const field = document.querySelector(".hdr__addr__field");
+      const startsAt = inTl.calls.find((c) => c[0] === "set" && c[1] === field);
+      expect(startsAt[2]).toMatchObject({ opacity: 0 });
+      const melt = inTl.calls.find((c) => c[0] === "to" && Array.isArray(c[1]) && c[1][0]?.id === "i1");
+      expect(melt[1].map((e) => e.id)).toEqual(["i1", "i2"]);
+      expect(melt[2]).toMatchObject({ opacity: 0 });
+      expect(inTl.calls.some((c) => c[0] === "to" && c[1]?.[0]?.id === "login")).toBe(true);
+
+      win.scrollY = 880;
+      win.fire("scroll");
+      expect(bar.dataset.hdrMode).toBe("nav");
+      expect(inTl.killed).toBe(true);
+      const ring = document.querySelector("[data-hdr-fx-ring]");
+      expect(gsap.sets.some(([t, v]) => t === ring && v.opacity === 0)).toBe(true);
+      const back = gsap.timelines[1].calls.find((c) => c[0] === "to" && c[1]?.[0]?.id === "i1");
+      expect(back[2]).toMatchObject({ opacity: 1, x: 0 });
+    });
+
+    it("mobile: the wordmark is the menu when no item is visible", () => {
+      HTMLElement.prototype.checkVisibility = function () { return this.dataset.hdrFx !== "item"; };
+      const gsap = fakeGsap();
+      setup({ gsap });
+      win.scrollY = 900;
+      win.fire("scroll");
+      const melt = gsap.timelines[0].calls.find((c) => c[0] === "to" && c[1]?.[0]?.id === "word");
+      expect(melt).toBeTruthy();
+    });
+  });
+
   it("stays in addr while the field is focused", () => {
     setup();
     win.scrollY = 900;
     win.fire("scroll");
     input.focus();
-    win.scrollY = 100;
+    win.scrollY = 10;
     win.fire("scroll");
     expect(bar.dataset.hdrMode).toBe("addr");
     input.blur();
