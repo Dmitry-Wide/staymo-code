@@ -37,9 +37,30 @@ describe("pure helpers", () => {
     expect(passThroughParams("")).toEqual([]);
   });
 
-  it("buildStartUrl carries postcode, sourcepath and ad params, never the address", () => {
-    const url = buildStartUrl("SW1V 1AA", "/guides/x", "?utm_source=g&address=1+Rose+St");
-    expect(url).toBe("/start-hosting?postal-code=SW1V+1AA&sourcepath=%2Fguides%2Fx&utm_source=g");
+  it("buildStartUrl matches the hero link: address, postcode, page title, then ad params", () => {
+    const url = buildStartUrl({
+      address: "1 Rose St, London",
+      postal: "SW1V 1AA",
+      title: "Rent & Earn | Staymo",
+      pathname: "/guides/x",
+      search: "?utm_source=g&address=Old&beds=3&gclid=abc",
+    });
+    expect(url).toBe(
+      "/start-hosting?address=1+Rose+St%2C+London&postal-code=SW1V+1AA&sourcepath=Rent+%26+Earn+%7C+Staymo&utm_source=g&gclid=abc"
+    );
+    const params = new URLSearchParams(url.split("?")[1]);
+    expect([...params.keys()]).toEqual(["address", "postal-code", "sourcepath", "utm_source", "gclid"]);
+    expect(params.get("sourcepath")).toBe("Rent & Earn | Staymo");
+    expect(params.has("beds")).toBe(false);
+  });
+
+  it("buildStartUrl falls back to the pathname without a title", () => {
+    expect(buildStartUrl({ address: "a", postal: "E14", title: "  ", pathname: "/guides/x", search: "" })).toBe(
+      "/start-hosting?address=a&postal-code=E14&sourcepath=%2Fguides%2Fx"
+    );
+    expect(buildStartUrl({ address: "a", postal: "E14", pathname: "" })).toBe(
+      "/start-hosting?address=a&postal-code=E14&sourcepath=%2F"
+    );
   });
 
   it("readStored/writeStored round-trip with a 30 min TTL", () => {
@@ -361,10 +382,29 @@ describe("initHeaderAddress", () => {
       $("#go").click(); // double submit guarded
       await vi.advanceTimersByTimeAsync(0);
       expect(win.staymoValidateAddress).toHaveBeenCalledTimes(1);
-      expect(assign).toHaveBeenCalledWith("/start-hosting?postal-code=SW1V+1AA&sourcepath=%2Fblog%2Fa&utm_source=x");
+      expect(assign).toHaveBeenCalledWith(
+        "/start-hosting?address=1+Rose+St&postal-code=SW1V+1AA&sourcepath=%2Fblog%2Fa&utm_source=x"
+      );
       expect(JSON.parse(store.data.staymo_address)).toMatchObject({ address: "1 Rose St", postal: "SW1V 1AA", src: "header" });
       const ev2 = win.dataLayer.find((e) => e.event === "header_address_submit");
       expect(ev2).toEqual({ event: "header_address_submit", method: "typed" });
+    });
+
+    it("sourcepath is the page title, the address is the trimmed field value", async () => {
+      setup();
+      document.title = "Short-let guide | Staymo";
+      try {
+        win.staymoValidateAddress = vi.fn(async () => true);
+        input.value = "  1 Rose St  ";
+        postal.value = "SW1V 1AA";
+        $("#go").click();
+        await vi.advanceTimersByTimeAsync(0);
+        expect(assign).toHaveBeenCalledWith(
+          "/start-hosting?address=1+Rose+St&postal-code=SW1V+1AA&sourcepath=Short-let+guide+%7C+Staymo&utm_source=x"
+        );
+      } finally {
+        document.title = "";
+      }
     });
 
     it("invalid → shows the error, no navigation, can retry", async () => {
@@ -404,7 +444,7 @@ describe("initHeaderAddress", () => {
       input.dataset.placeSelected = "1";
       await vi.advanceTimersByTimeAsync(0);
       expect(assign).toHaveBeenCalledTimes(1);
-      expect(assign.mock.calls[0][0]).toMatch(/^\/start-hosting\?postal-code=SW1V\+1AA&/);
+      expect(assign.mock.calls[0][0]).toMatch(/^\/start-hosting\?address=1\+Rose\+St&postal-code=SW1V\+1AA&/);
       expect(win.dataLayer.filter((e) => e.event === "header_address_submit")).toEqual([
         { event: "header_address_submit", method: "pick" },
       ]);

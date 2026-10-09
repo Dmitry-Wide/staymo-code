@@ -16,8 +16,9 @@
    header_address_clear.
    Picking a Google suggestion submits at once (all widths); typed text waits for
    Enter / Get Started, geo and stored fills never auto-submit.
-   A valid address goes to /start-hosting?postal-code=… (no address in the URL —
-   the address itself travels through sessionStorage "staymo_address").
+   A valid address goes to /start-hosting?address=…&postal-code=…&sourcepath=<page title>
+   — the same shape as the hero form (no beds: /start-hosting asks on step 0), plus
+   ad params. sessionStorage "staymo_address" keeps it for the prefill and the ×.
    No-op on pages without the root, and when the root is not rendered
    (display:none from a Designer variant, e.g. /dubai): no mode, no listeners, no prefill. */
 
@@ -49,10 +50,12 @@ export function passThroughParams(search) {
   return out;
 }
 
-export function buildStartUrl(postal, pathname, search) {
+// Same shape and order as the hero form's link; sourcepath is the page title.
+export function buildStartUrl({ address, postal, title, pathname, search }) {
   const params = new URLSearchParams();
+  params.set("address", address);
   params.set("postal-code", postal);
-  params.set("sourcepath", pathname || "/");
+  params.set("sourcepath", (title || "").trim() || pathname || "/");
   passThroughParams(search).forEach(([k, v]) => params.append(k, v));
   return `/start-hosting?${params.toString()}`;
 }
@@ -429,9 +432,12 @@ export function initHeaderAddress(win = window, doc = document) {
     }
     const prev = readStored(storage);
     const beds = prev && normalizePostcode(prev.postal) === normalizePostcode(postal) ? prev.beds : undefined;
-    writeStored(storage, { address: input.value.trim(), postal, beds, src: "header" });
+    const address = input.value.trim();
+    writeStored(storage, { address, postal, beds, src: "header" });
     dataLayer.push({ event: "header_address_submit", method });
-    win.location.assign(buildStartUrl(postal, win.location.pathname, win.location.search));
+    win.location.assign(
+      buildStartUrl({ address, postal, title: doc.title, pathname: win.location.pathname, search: win.location.search })
+    );
   };
 
   // Back/forward cache restores the page mid-"submitting".

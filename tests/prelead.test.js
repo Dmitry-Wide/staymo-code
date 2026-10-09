@@ -281,6 +281,15 @@ describe("prefillFromURL: address handoff without beds", () => {
     expect($("[data-rooms-input]").value).toBe("2");
   });
 
+  it("header link (address + postal-code + sourcepath, no beds) fills step 0 from the URL, no auto-click", () => {
+    const store = memStore({ address: "Old Stored St", postal: "E14 1AA", ts: NOW - 1000 });
+    const search = "?address=1+Rose+St%2C+London&postal-code=SW1V+1AA&sourcepath=Rent+%26+Earn+%7C+Staymo&utm_source=g";
+    expect(prefillFromURL(document, search, store, NOW)).toBe(true);
+    expect($('[data-input-id="address-search"]').value).toBe("1 Rose St, London");
+    expect($('[data-input-id="postal-code-result"]').value).toBe("SW1V 1AA");
+    expect($("[data-rooms-input]").value).toBe("2"); // bedrooms stay for the visitor
+  });
+
   it("prefers the URL address over storage", () => {
     const store = memStore({ address: "Stored", postal: "SW1V 1AA", ts: NOW - 1000 });
     prefillFromURL(document, "?postal-code=SW1V+1AA&address=From+URL", store, NOW);
