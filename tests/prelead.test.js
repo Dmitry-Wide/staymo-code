@@ -11,6 +11,7 @@ import {
   readStoredAddress,
   initAddressClear,
 } from "../src/prelead.js";
+import { initBeds } from "../src/beds.js";
 
 beforeEach(() => {
   document.body.innerHTML = "";
@@ -119,12 +120,66 @@ describe("prefillFromURL on the tile-based funnel", () => {
     vi.useRealTimers();
   });
 
-  it("clamps a value above the last tile onto that tile", () => {
+  it("marks the last tile above its range but keeps the asked number in the input", () => {
     vi.useFakeTimers();
     tileFormFixture();
-    prefillFromURL(document, "?address=a&postal-code=p&beds=9");
+    prefillFromURL(document, "?address=a&postal-code=p&beds=7");
+    expect(document.querySelector('[data-room="4"]').classList.contains("is-bed-selected")).toBe(true);
+    expect(document.querySelector("[data-rooms-input]").value).toBe("7");
+    vi.runAllTimers();
+    vi.useRealTimers();
+  });
+
+  it("caps the kept number at the hero stepper's max (10)", () => {
+    vi.useFakeTimers();
+    tileFormFixture();
+    prefillFromURL(document, "?address=a&postal-code=p&beds=12");
+    expect(document.querySelector('[data-room="4"]').classList.contains("is-bed-selected")).toBe(true);
+    expect(document.querySelector("[data-rooms-input]").value).toBe("10");
+    vi.runAllTimers();
+    vi.useRealTimers();
+  });
+
+  it("still clamps a non-integer above the last tile onto that tile", () => {
+    vi.useFakeTimers();
+    tileFormFixture();
+    prefillFromURL(document, "?address=a&postal-code=p&beds=5.5");
     expect(document.querySelector('[data-room="4"]').classList.contains("is-bed-selected")).toBe(true);
     expect(document.querySelector("[data-rooms-input]").value).toBe("4");
+    vi.runAllTimers();
+    vi.useRealTimers();
+  });
+
+  it("keeps the asked number on the stored-address path too", () => {
+    tileFormFixture();
+    const storage = { getItem: () => JSON.stringify({ address: "a", postal: "p", beds: "7", ts: 1000 }) };
+    expect(prefillFromURL(document, "", storage, 2000)).toBe(true);
+    expect(document.querySelector('[data-room="4"]').classList.contains("is-bed-selected")).toBe(true);
+    expect(document.querySelector("[data-rooms-input]").value).toBe("7");
+  });
+
+  it("survives beds.js init after prefill; a tile click afterwards wins", () => {
+    vi.useFakeTimers();
+    tileFormFixture();
+    prefillFromURL(document, "?address=a&postal-code=p&beds=7");
+    initBeds(document);
+    const input = document.querySelector("[data-rooms-input]");
+    expect(input.value).toBe("7");
+    document.querySelector('[data-room="4"]').click();
+    expect(input.value).toBe("4");
+    document.querySelector('[data-room="2"]').click();
+    expect(input.value).toBe("2");
+    vi.runAllTimers();
+    vi.useRealTimers();
+  });
+
+  it("beds.js init after prefill of an in-range value keeps it", () => {
+    vi.useFakeTimers();
+    tileFormFixture();
+    prefillFromURL(document, "?address=a&postal-code=p&beds=3");
+    initBeds(document);
+    expect(document.querySelector('[data-room="3"]').classList.contains("is-bed-selected")).toBe(true);
+    expect(document.querySelector("[data-rooms-input]").value).toBe("3");
     vi.runAllTimers();
     vi.useRealTimers();
   });
