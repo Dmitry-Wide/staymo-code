@@ -92,3 +92,27 @@ describe("initBeds", () => {
     expect(c.querySelector("[data-rooms-input]").value).toBe("2");
   });
 });
+
+describe("initBeds with a number above the last tile", () => {
+  function aboveFixture(held, selected = 4) {
+    document.body.innerHTML = `
+      <div data-rooms>
+        <div data-room="3" class="${selected === 3 ? "is-bed-selected" : ""}">3</div>
+        <div data-room="4" class="${selected === 4 ? "is-bed-selected" : ""}">4 +</div>
+        <input type="hidden" data-rooms-input value="${held}">
+      </div>`;
+    return document.querySelector("[data-rooms]");
+  }
+
+  it("keeps 7 under the preselected last tile", () => {
+    const c = aboveFixture("7");
+    initBeds();
+    expect(c.querySelector("[data-rooms-input]").value).toBe("7");
+  });
+
+  it("still syncs a preselected tile that is not the last one", () => {
+    const c = aboveFixture("7", 3);
+    initBeds();
+    expect(c.querySelector("[data-rooms-input]").value).toBe("3");
+  });
+});

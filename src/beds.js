@@ -20,11 +20,20 @@ export function selectBed(container, bedEl) {
   return value;
 }
 
+function keepsMoreThan(container, bedEl) {
+  const input = container.querySelector("[data-rooms-input]");
+  const held = Number(input && input.value);
+  const room = Number(bedEl.getAttribute("data-room"));
+  const top = Math.max(...[...container.querySelectorAll("[data-room]")].map((b) => Number(b.getAttribute("data-room"))));
+  return Boolean(input && input.value) && Number.isInteger(held) && room === top && held > room;
+}
+
 export function initBeds(doc = document) {
   doc.querySelectorAll("[data-rooms]").forEach((container) => {
-    // Reflect a pre-selected tile from the markup into the hidden input.
+    // Reflect a pre-selected tile from the markup into the hidden input, unless
+    // the input already holds more than that tile (prelead.js keeps beds=7 under "4 +").
     const preselected = container.querySelector(`[data-room].${SELECTED}`);
-    if (preselected) selectBed(container, preselected);
+    if (preselected && !keepsMoreThan(container, preselected)) selectBed(container, preselected);
     container.addEventListener("click", (e) => {
       const bed = e.target.closest("[data-room]");
       if (bed && container.contains(bed)) selectBed(container, bed);
