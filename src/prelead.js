@@ -30,15 +30,23 @@ export function getCookie(name, cookieStr = typeof document !== "undefined" ? do
   const nameEQ = name + "=";
   for (const part of cookieStr.split(";")) {
     const c = part.trim();
-    if (c.indexOf(nameEQ) === 0) return c.substring(nameEQ.length);
+    if (c.indexOf(nameEQ) !== 0) continue;
+    const raw = c.substring(nameEQ.length);
+    // Legacy cookies from the old inline scripts were written raw (e.g. a stray "%").
+    try {
+      return decodeURIComponent(raw);
+    } catch {
+      return raw;
+    }
   }
   return null;
 }
 
+// The value is URI-encoded so ";", "," or spaces from the URL cannot add cookie attributes.
 export function buildCookie(name, value, days) {
   const date = new Date();
   date.setTime(date.getTime() + days * 24 * 60 * 60 * 1000);
-  return `${name}=${value || ""}; expires=${date.toUTCString()}; path=/; SameSite=Lax`;
+  return `${name}=${encodeURIComponent(value || "")}; expires=${date.toUTCString()}; path=/; SameSite=Lax`;
 }
 
 // The tile funnel has no [data-input-id="beds-count"]: bedrooms are picked with

@@ -41,6 +41,42 @@ describe("buildCookie", () => {
   });
 });
 
+describe("cookie value encoding", () => {
+  function clear(n) {
+    document.cookie = `${n}=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/`;
+  }
+  const names = ["referral", "referrer-name", "referrer-email"];
+  beforeEach(() => names.forEach(clear));
+  afterEach(() => names.forEach(clear));
+
+  it("keeps a value with '; domain=evil' as one cookie value", () => {
+    const c = buildCookie("referral", "x; domain=evil", 30);
+    expect(c.split(";")[0]).toBe("referral=x%3B%20domain%3Devil");
+    expect(c).not.toContain("domain=evil");
+    document.cookie = c;
+    expect(getCookie("referral")).toBe("x; domain=evil");
+  });
+
+  it("round-trips a name with a space and an email with '+' and '@'", () => {
+    document.cookie = buildCookie("referrer-name", "John Smith", 28);
+    document.cookie = buildCookie("referrer-email", "a+b@example.com", 28);
+    expect(getCookie("referrer-name")).toBe("John Smith");
+    expect(getCookie("referrer-email")).toBe("a+b@example.com");
+  });
+
+  it("returns a legacy raw value as is when it is not valid URI encoding", () => {
+    expect(getCookie("referral", "referral=100%")).toBe("100%");
+    expect(getCookie("referral", "referral=spring")).toBe("spring");
+  });
+
+  it("writes the decoded referral into #referral", () => {
+    document.body.innerHTML = '<input id="referral">';
+    document.cookie = buildCookie("referral", "a b;c", 30);
+    injectReferral(document);
+    expect(document.getElementById("referral").value).toBe("a b;c");
+  });
+});
+
 describe("prefillFromURL", () => {
   function formFixture() {
     document.body.innerHTML = `
