@@ -133,12 +133,16 @@ describe("setOpen animation", () => {
     p.getBoundingClientRect = () => ({ height: p.style.height ? parseFloat(p.style.height) : p.classList.contains("is-expanded") ? 94 : 0 });
     setOpen(items()[0], true);
     expect(p.style.height).toBe("94px");
+    expect(p.style.overflow).toBe("hidden"); // clipped only while it moves
     vi.advanceTimersByTime(200);
     expect(p.style.height).toBe("");
+    expect(p.style.overflow).toBe(""); // open: the combo shows overflowing glyphs
     setOpen(items()[0], false);
     expect(p.style.height).toBe("0px");
+    expect(p.style.overflow).toBe("hidden");
     vi.advanceTimersByTime(200);
     expect(p.style.height).toBe("");
+    expect(p.style.overflow).toBe("");
   });
 
   it("sets the end state at once when the panel has no transition", () => {
