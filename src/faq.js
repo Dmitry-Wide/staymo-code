@@ -12,9 +12,10 @@
        [data-faq-panel]       the answer
 
    State: class `is-expanded` on the panel and on each icon — Designer combos
-   hold the open height and opacity, the base classes hold the transitions; the
+   hold the open height and opacity, the `is-accordion` combos the transitions; the
    toggle carries aria-expanded. Height cannot transition to auto, so for the
-   transition the panel gets px heights, cleared when it ends. */
+   transition the panel gets px heights and overflow hidden, cleared when it
+   ends (the open combo shows overflow: descenders stick out of trimmed text). */
 
 const OPEN = "is-expanded";
 const timers = new WeakMap();
@@ -37,6 +38,7 @@ export function setOpen(item, open, animate = true) {
     // Pin the current height before the classes change, so the transition
     // starts from what is on screen (also mid-way through a previous one).
     panel.style.height = `${panel.getBoundingClientRect().height}px`;
+    panel.style.overflow = "hidden";
     void panel.offsetHeight;
   }
 
@@ -45,8 +47,12 @@ export function setOpen(item, open, animate = true) {
   panel.classList.toggle(OPEN, open);
   item.querySelectorAll("[data-faq-ico]").forEach((ico) => ico.classList.toggle(OPEN, open));
 
-  if (!ms) {
+  const release = () => {
     panel.style.height = "";
+    panel.style.overflow = "";
+  };
+  if (!ms) {
+    release();
     return;
   }
   // The open height is the panel's own auto height (scrollHeight also counts
@@ -62,7 +68,7 @@ export function setOpen(item, open, animate = true) {
     panel.style.transition = "";
   }
   panel.style.height = `${to}px`;
-  timers.set(panel, setTimeout(() => (panel.style.height = ""), ms));
+  timers.set(panel, setTimeout(release, ms));
 }
 
 export function initFaq(doc = document) {
