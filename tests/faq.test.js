@@ -103,19 +103,19 @@ describe("initFaq", () => {
   it("leaves another [data-faq-list] alone, nested or not", () => {
     const cell = (html) => `<div>${html}</div>`;
     document.body.innerHTML =
-      `<div data-faq-list>${cell(item({ open: true }))}<div data-faq-list>${cell(item({ open: true }))}${cell(item())}</div></div>` +
+      `<div data-faq-list>${cell(item({ open: true }))}<div data-faq-list>${cell(item({ open: true }))}${cell(item())}</div>${cell(item())}</div>` +
       `<div data-faq-list>${cell(item({ open: true }))}</div>`;
     initFaq();
     toggle(2).click(); // inner list: closes item 1 only
     expect(isOpen(2)).toBe(true);
     expect(isClosed(1)).toBe(true);
     expect(isOpen(0)).toBe(true);
+    expect(isOpen(4)).toBe(true);
+    toggle(3).click(); // outer list: closes item 0, not the nested item 2
     expect(isOpen(3)).toBe(true);
-    toggle(1).click(); // inner list again; outer item 0 untouched
-    toggle(0).click(); // outer list: closes item 0 itself only
     expect(isClosed(0)).toBe(true);
-    expect(isOpen(1)).toBe(true);
-    expect(isOpen(3)).toBe(true);
+    expect(isOpen(2)).toBe(true);
+    expect(isOpen(4)).toBe(true);
   });
 
   it("toggles on Enter and Space, not on other keys", () => {
