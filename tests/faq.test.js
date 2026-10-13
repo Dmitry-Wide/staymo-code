@@ -66,18 +66,26 @@ describe("initFaq", () => {
     expect(toggle(0).getAttribute("aria-controls")).toBe("own-id");
   });
 
-  it("opens and closes an item only by its own toggle", () => {
-    document.body.innerHTML = item({ open: true }) + item();
+  it("keeps one item open per list and closes nothing on a click elsewhere", () => {
+    document.body.innerHTML = item({ open: true }) + item() + item();
+    initFaq();
+    document.body.click();
+    expect(isOpen(0)).toBe(true); // a click elsewhere closes nothing
+    toggle(1).click();
+    expect(isOpen(1)).toBe(true);
+    expect(isClosed(0)).toBe(true); // opening another closes the open one
+    expect(isClosed(2)).toBe(true);
+    toggle(1).click();
+    expect(isClosed(1)).toBe(true); // its own toggle closes it
+    expect(isClosed(0)).toBe(true);
+  });
+
+  it("leaves items of another list alone", () => {
+    document.body.innerHTML = `<div>${item({ open: true })}</div><div>${item()}</div>`;
     initFaq();
     toggle(1).click();
     expect(isOpen(1)).toBe(true);
-    expect(isOpen(0)).toBe(true); // the other item stays open
-    document.body.click();
-    expect(isOpen(0)).toBe(true); // a click elsewhere closes nothing
-    expect(isOpen(1)).toBe(true);
-    toggle(0).click();
-    expect(isClosed(0)).toBe(true);
-    expect(isOpen(1)).toBe(true);
+    expect(isOpen(0)).toBe(true);
   });
 
   it("toggles on Enter and Space, not on other keys", () => {

@@ -1,7 +1,7 @@
 /* FAQ accordion — the Webflow component "FAQ 02 | Accordion Item", plain divs
    instead of a Webflow Dropdown (a Dropdown closes on any click elsewhere on
-   the page and cannot start open). Items are independent: an item opens and
-   closes only by its own toggle.
+   the page and cannot start open). One item is open per list: opening an item
+   closes the open one among its siblings; a click elsewhere closes nothing.
 
    Markup (data-* contract, set in the component definition):
      [data-faq-item]          item root
@@ -77,7 +77,15 @@ export function initFaq(doc = document) {
     toggle.setAttribute("aria-controls", panel.id);
     setOpen(item, !!item.querySelector(":scope > [data-faq-open]"), false);
 
-    toggle.addEventListener("click", () => setOpen(item, toggle.getAttribute("aria-expanded") !== "true"));
+    toggle.addEventListener("click", () => {
+      const open = toggle.getAttribute("aria-expanded") !== "true";
+      if (open) {
+        item.parentElement.querySelectorAll(":scope > [data-faq-item]").forEach((other) => {
+          if (other !== item && other.querySelector('[data-faq-toggle][aria-expanded="true"]')) setOpen(other, false);
+        });
+      }
+      setOpen(item, open);
+    });
     toggle.addEventListener("keydown", (e) => {
       if (e.key !== "Enter" && e.key !== " ") return;
       e.preventDefault();
