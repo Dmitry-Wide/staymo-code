@@ -1,9 +1,15 @@
 /* FAQ accordion — the Webflow component "FAQ 02 | Accordion Item", plain divs
    instead of a Webflow Dropdown (a Dropdown closes on any click elsewhere on
    the page and cannot start open). One item is open per list: opening an item
-   closes the open one among its siblings; a click elsewhere closes nothing.
+   closes the open one in its list; a click elsewhere closes nothing.
+
+   The list is the closest [data-faq-list] ancestor: all [data-faq-item] in it
+   whose own closest [data-faq-list] is that list, however deep (e.g. each item
+   in its own grid cell). Without a [data-faq-list] ancestor the list is the
+   item's siblings.
 
    Markup (data-* contract, set in the component definition):
+     [data-faq-list]          optional, on the page: the list wrapper
      [data-faq-item]          item root
        [data-faq-open]        rendered only when the item's "Open by default"
                               prop is on (element visibility bound to the prop)
@@ -86,7 +92,11 @@ export function initFaq(doc = document) {
     toggle.addEventListener("click", () => {
       const open = toggle.getAttribute("aria-expanded") !== "true";
       if (open) {
-        item.parentElement.querySelectorAll(":scope > [data-faq-item]").forEach((other) => {
+        const list = item.closest("[data-faq-list]");
+        const others = list
+          ? Array.from(list.querySelectorAll("[data-faq-item]")).filter((o) => o.closest("[data-faq-list]") === list)
+          : item.parentElement.querySelectorAll(":scope > [data-faq-item]");
+        others.forEach((other) => {
           if (other !== item && other.querySelector('[data-faq-toggle][aria-expanded="true"]')) setOpen(other, false);
         });
       }
