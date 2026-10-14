@@ -14,6 +14,10 @@ import {
   captureFirstTouch,
   externalReferrer,
   FIRST_TOUCH_KEY,
+  LEGACY_TRACKING_PREFIX,
+  clearLegacyTracking,
+  clearLegacyTrackingCookies,
+  clearLegacyTrackingStorage,
 } from "../src/prelead.js";
 import { initBeds } from "../src/beds.js";
 
@@ -583,5 +587,133 @@ describe("first touch (landing page + external referrer)", () => {
     };
     expect(captureFirstTouch(makeWin({ consent: true }), doc(""), bad)).toBe(false);
     expect(captureFirstTouch(makeWin({ consent: true }), doc(""), null)).toBe(false);
+  });
+});
+
+describe("legacy staymo_tracking_* cleanup", () => {
+  const expire = (n) => (document.cookie = `${n}=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/`);
+  const keep = ["referral", "staymo_keep", "other_tracking_x"];
+  afterEach(() => {
+    ["staymo_tracking_utm_source", "staymo_tracking_hsa_acc", ...keep].forEach(expire);
+    localStorage.clear();
+    sessionStorage.clear();
+  });
+
+  it("deletes staymo_tracking_* cookies and leaves the others", () => {
+    document.cookie = "staymo_tracking_utm_source=google; path=/; max-age=7776000; SameSite=Lax";
+    document.cookie = "staymo_tracking_hsa_acc=123; path=/; max-age=7776000; SameSite=Lax";
+    document.cookie = "referral=spring; path=/";
+    document.cookie = "staymo_keep=Ann; path=/";
+    document.cookie = "other_tracking_x=1; path=/";
+
+    const removed = clearLegacyTrackingCookies(document, location.hostname);
+
+    expect(removed.sort()).toEqual(["staymo_tracking_hsa_acc", "staymo_tracking_utm_source"]);
+    expect(document.cookie).not.toContain(LEGACY_TRACKING_PREFIX);
+    expect(getCookie("referral")).toBe("spring");
+    expect(getCookie("staymo_keep")).toBe("Ann");
+    expect(getCookie("other_tracking_x")).toBe("1");
+  });
+
+  it("expires each name host-only and with both domain variants, path=/", () => {
+    const writes = [];
+    const doc = {
+      get cookie() {
+        return "a=1; staymo_tracking_utm_term=x; staymo_tracking_adid=7";
+      },
+      set cookie(v) {
+        writes.push(v);
+      },
+    };
+    clearLegacyTrackingCookies(doc, "www.staymo.co.uk");
+    expect(writes).toHaveLength(6);
+    for (const w of writes) {
+      expect(w).toMatch(/^staymo_tracking_(utm_term|adid)=;/);
+      expect(w).toContain("expires=Thu, 01 Jan 1970 00:00:00 GMT");
+      expect(w).toContain("path=/");
+    }
+    const term = writes.filter((w) => w.startsWith("staymo_tracking_utm_term="));
+    expect(term.filter((w) => !w.includes("domain="))).toHaveLength(1);
+    expect(term.some((w) => w.endsWith("; domain=www.staymo.co.uk"))).toBe(true);
+    expect(term.some((w) => w.endsWith("; domain=.www.staymo.co.uk"))).toBe(true);
+  });
+
+  it("writes nothing when no legacy cookie exists", () => {
+    const writes = [];
+    const doc = {
+      get cookie() {
+        return "referral=x; staymo_trackingX=1";
+      },
+      set cookie(v) {
+        writes.push(v);
+      },
+    };
+    expect(clearLegacyTrackingCookies(doc, "staymo.co.uk")).toEqual([]);
+    expect(writes).toEqual([]);
+  });
+
+  it("removes staymo_tracking_* localStorage keys and leaves the others", () => {
+    localStorage.setItem("staymo_tracking_utm_source", "google");
+    localStorage.setItem("staymo_tracking_utm_campaign", "spring");
+    localStorage.setItem("staymo_tracking_hsa_ver", "3");
+    localStorage.setItem("staymo_other", "keep");
+    sessionStorage.setItem(FIRST_TOUCH_KEY, '{"landing":"x","referrer":""}');
+
+    const removed = clearLegacyTrackingStorage(localStorage);
+
+    expect(removed.sort()).toEqual([
+      "staymo_tracking_hsa_ver",
+      "staymo_tracking_utm_campaign",
+      "staymo_tracking_utm_source",
+    ]);
+    expect(localStorage.length).toBe(1);
+    expect(localStorage.getItem("staymo_other")).toBe("keep");
+    expect(sessionStorage.getItem(FIRST_TOUCH_KEY)).not.toBe(null);
+  });
+
+  it("does not throw when storage or cookies throw, or storage is missing", () => {
+    const throwing = {
+      get length() {
+        throw new Error("SecurityError");
+      },
+    };
+    expect(clearLegacyTrackingStorage(throwing)).toEqual([]);
+    expect(clearLegacyTrackingStorage(null)).toEqual([]);
+    const badDoc = {
+      get cookie() {
+        throw new Error("SecurityError");
+      },
+    };
+    expect(clearLegacyTrackingCookies(badDoc, "staymo.co.uk")).toEqual([]);
+    expect(() => clearLegacyTracking(badDoc, throwing)).not.toThrow();
+  });
+
+  it("runs on module load: a fresh import clears both stores", async () => {
+    document.cookie = "staymo_tracking_utm_medium=cpc; path=/";
+    document.cookie = "referral=spring; path=/";
+    localStorage.setItem("staymo_tracking_utm_medium", "cpc");
+    localStorage.setItem("staymo_other", "keep");
+    vi.resetModules();
+    await import("../src/prelead.js");
+    expect(document.cookie).not.toContain(LEGACY_TRACKING_PREFIX);
+    expect(getCookie("referral")).toBe("spring");
+    expect(localStorage.getItem("staymo_tracking_utm_medium")).toBe(null);
+    expect(localStorage.getItem("staymo_other")).toBe("keep");
+  });
+
+  it("a localStorage getter that throws does not break the module load", async () => {
+    const desc = Object.getOwnPropertyDescriptor(window, "localStorage");
+    Object.defineProperty(window, "localStorage", {
+      configurable: true,
+      get() {
+        throw new Error("SecurityError");
+      },
+    });
+    try {
+      vi.resetModules();
+      await expect(import("../src/prelead.js")).resolves.toBeTruthy();
+    } finally {
+      if (desc) Object.defineProperty(window, "localStorage", desc);
+    }
   });
 });

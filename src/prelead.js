@@ -19,6 +19,9 @@
      visit. Consent given later on that same page writes it then; a later page
      writes nothing (its landing is unknown). lead.js sends it as lead_start /
      first_referrer.
+   - Legacy cleanup: the removed inline "UTM Tracking Passthrough" embed wrote
+     cookies and localStorage keys "staymo_tracking_<key>" before any consent;
+     nothing reads them. Every load deletes both (deleting needs no consent).
    JS binds to contract attributes only. */
 
 const REFERRER_COOKIE_DAYS = 28;
@@ -320,7 +323,59 @@ export function initFirstTouch(win = window, doc = document, storage = sessionSt
   win.addEventListener("CookiebotOnAccept", run);
 }
 
+// --- Legacy cleanup: staymo_tracking_* from the removed UTM passthrough embed ---
+export const LEGACY_TRACKING_PREFIX = "staymo_tracking_";
+
+function localStore() {
+  try {
+    return typeof window !== "undefined" ? window.localStorage : null;
+  } catch (e) {
+    return null;
+  }
+}
+
+// The embed wrote host-only cookies with path=/; the domain variants cover a
+// copy set with a domain attribute. Returns the cookie names expired.
+export function clearLegacyTrackingCookies(doc = document, host = typeof location !== "undefined" ? location.hostname : "") {
+  const names = [];
+  try {
+    for (const part of String(doc.cookie || "").split(";")) {
+      const name = part.split("=")[0].trim();
+      if (name.indexOf(LEGACY_TRACKING_PREFIX) === 0 && !names.includes(name)) names.push(name);
+    }
+    const expire = `=; expires=Thu, 01 Jan 1970 00:00:00 GMT; max-age=0; path=/`;
+    for (const name of names) {
+      doc.cookie = name + expire;
+      if (host) {
+        doc.cookie = `${name}${expire}; domain=${host}`;
+        doc.cookie = `${name}${expire}; domain=.${host}`;
+      }
+    }
+  } catch (e) {}
+  return names;
+}
+
+// Returns the localStorage keys removed.
+export function clearLegacyTrackingStorage(storage = localStore()) {
+  const keys = [];
+  try {
+    if (!storage) return keys;
+    for (let i = 0; i < storage.length; i++) {
+      const key = storage.key(i);
+      if (key && key.indexOf(LEGACY_TRACKING_PREFIX) === 0) keys.push(key);
+    }
+    keys.forEach((key) => storage.removeItem(key));
+  } catch (e) {}
+  return keys;
+}
+
+export function clearLegacyTracking(doc = document, storage = localStore()) {
+  clearLegacyTrackingCookies(doc);
+  clearLegacyTrackingStorage(storage);
+}
+
 if (typeof window !== "undefined") {
+  clearLegacyTracking();
   // Capture the referral cookie ASAP (matches the original IIFE timing).
   captureReferral();
   window.addEventListener("DOMContentLoaded", () => {
