@@ -64,6 +64,7 @@ describe("initNavProgress", () => {
     ["a hash on the same page", '<a href="/blog?page=2#faq">x</a>'],
     ["a bare hash", '<a href="#top">x</a>'],
     ["data-nav-progress=off on an ancestor", '<nav data-nav-progress="off"><a href="/pricing">x</a></nav>'],
+    ["an unparseable href", '<a href="http://[bad">x</a>'],
     ["a click outside links", '<a href="/pricing">x</a><p data-hit>text</p>']
   ])("skips %s", (_, html, init = {}, prevent = false) => {
     click(html, init, prevent);
@@ -90,6 +91,12 @@ describe("initNavProgress", () => {
     expect(loading()).toBe(true);
     vi.advanceTimersByTime(4000);
     expect(doc.documentElement.hasAttribute("data-nav")).toBe(false);
+  });
+
+  it("reuses a bar already in the markup", () => {
+    click('<div data-nav-bar></div><a href="/pricing">x</a>');
+    expect(loading()).toBe(true);
+    expect(doc.querySelectorAll("[data-nav-bar]").length).toBe(1);
   });
 
   it("keeps a single bar after two clicks", () => {

@@ -8,7 +8,8 @@
    (menus, modals, tabs) run first and a prevented click is skipped. Skipped
    too: modifier keys, non-left buttons, target other than _self, download
    links, non-http(s) and other-origin URLs, the same document (hash anchors)
-   and anything inside [data-nav-progress="off"]. The attribute is removed on
+   and anything inside [data-nav-progress="off"]; SVG links fall out at the
+   target check (their target is not a string). The attribute is removed on
    a bfcache restore (pageshow persisted) and after 10 s (an attachment, a
    cancelled navigation). */
 
@@ -27,7 +28,12 @@ export function initNavProgress(win = window, doc = document) {
     const a = e.target.closest?.("a[href]");
     if (!a || (a.target && a.target !== "_self") || a.hasAttribute("download")) return;
     if (a.closest('[data-nav-progress="off"]')) return;
-    const url = new URL(a.href, loc.href);
+    let url;
+    try {
+      url = new URL(a.href, loc.href);
+    } catch {
+      return;
+    }
     if (!/^https?:$/.test(url.protocol) || url.origin !== loc.origin) return;
     if (url.pathname === loc.pathname && url.search === loc.search) return;
 
@@ -48,5 +54,6 @@ export function initNavProgress(win = window, doc = document) {
 }
 
 if (typeof window !== "undefined") {
-  window.addEventListener("DOMContentLoaded", () => initNavProgress());
+  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", () => initNavProgress());
+  else initNavProgress();
 }
