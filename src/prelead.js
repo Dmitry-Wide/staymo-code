@@ -13,6 +13,12 @@
      Cookiebot marketing consent (personal data of the referrer). Before
      consent only the ?referral code is kept.
    - Referral cookie: ?referral is stored to a cookie and written into #referral.
+   - First touch: on the visit's first page (no referrer or an external one) and
+     only with Cookiebot Statistics consent, sessionStorage "staymo_first_touch"
+     keeps the landing URL (origin + path) and the external referrer, once per
+     visit. Consent given later on that same page writes it then; a later page
+     writes nothing (its landing is unknown). lead.js sends it as lead_start /
+     first_referrer.
    JS binds to contract attributes only. */
 
 const REFERRER_COOKIE_DAYS = 28;
@@ -266,6 +272,54 @@ export function injectReferral(doc = document) {
   if (input && value) input.value = value;
 }
 
+// --- First touch: landing page + external referrer (Statistics consent only) ---
+// Same key/format as lead.js (duplicated: modules don't import each other).
+export const FIRST_TOUCH_KEY = "staymo_first_touch";
+const FIRST_TOUCH_MAX = 255;
+
+export function hasStatisticsConsent(win = typeof window !== "undefined" ? window : undefined) {
+  return win?.Cookiebot?.consent?.statistics === true;
+}
+
+// External referrer of this page, "" when there is none; null when the referrer is
+// this site (not the visit's first page).
+export function externalReferrer(referrer, host) {
+  const ref = String(referrer || "").trim();
+  if (!ref) return "";
+  try {
+    return new URL(ref).host === host ? null : ref;
+  } catch (e) {
+    return ref;
+  }
+}
+
+// Writes the first-touch entry when this page is the visit's landing page, consent
+// is given and nothing is stored yet. Returns true when it wrote.
+export function captureFirstTouch(win = window, doc = document, storage = sessionStore()) {
+  if (!hasStatisticsConsent(win)) return false;
+  const loc = win.location;
+  const referrer = externalReferrer(doc.referrer, loc.host);
+  if (referrer === null) return false;
+  try {
+    if (!storage || storage.getItem(FIRST_TOUCH_KEY)) return false;
+    const entry = {
+      landing: (loc.origin + loc.pathname).slice(0, FIRST_TOUCH_MAX),
+      referrer: referrer.slice(0, FIRST_TOUCH_MAX),
+    };
+    storage.setItem(FIRST_TOUCH_KEY, JSON.stringify(entry));
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+
+// Runs now, and again if consent is accepted later on this same page.
+export function initFirstTouch(win = window, doc = document, storage = sessionStore()) {
+  const run = () => captureFirstTouch(win, doc, storage);
+  run();
+  win.addEventListener("CookiebotOnAccept", run);
+}
+
 if (typeof window !== "undefined") {
   // Capture the referral cookie ASAP (matches the original IIFE timing).
   captureReferral();
@@ -274,5 +328,6 @@ if (typeof window !== "undefined") {
     prefillFromURL();
     initReferrerAttribution();
     injectReferral();
+    initFirstTouch();
   });
 }
