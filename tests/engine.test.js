@@ -172,6 +172,45 @@ describe("initStepper — funnel flow", () => {
     expect(width()).toBe("25%");
   });
 
+  it("marks the initially active frame/step/photo with data-est-still (no entrance replay)", () => {
+    funnelFixture();
+    initStepper();
+    const still = (el) => el.hasAttribute("data-est-still");
+    expect(still(document.querySelector("[start-frame]"))).toBe(true);
+    expect(still(stepEl(0))).toBe(true);
+    expect(still(document.querySelector('[start-photo][data-step="0"]'))).toBe(true);
+    expect(still(stepEl(1))).toBe(false);
+    expect(still(document.querySelector('[start-photo][data-step="1"]'))).toBe(false);
+    expect(still(document.querySelector("[start-loading]"))).toBe(false);
+    expect(document.documentElement.classList.contains("est-ready")).toBe(true);
+  });
+
+  it("drops data-est-still on a real state change; unchanged frame keeps it", () => {
+    funnelFixture();
+    fillAddress();
+    initStepper();
+    const still = (el) => el.hasAttribute("data-est-still");
+    document.querySelector("[start-start-button]").click();
+    expect(stepActive(1)).toBe(true);
+    expect(still(stepEl(0))).toBe(false);
+    expect(still(stepEl(1))).toBe(false);
+    expect(still(document.querySelector('[start-photo][data-step="0"]'))).toBe(false);
+    expect(still(document.querySelector("[start-frame]"))).toBe(true);
+  });
+
+  it("showFinal drops the frame marker; going back re-animates the frame", () => {
+    funnelFixture();
+    initStepper();
+    const frame = document.querySelector("[start-frame]");
+    window.estGoTo("result");
+    expect(active("[start-result]")).toBe(true);
+    expect(frame.hasAttribute("data-est-still")).toBe(false);
+    expect(document.querySelector("[start-result]").hasAttribute("data-est-still")).toBe(false);
+    window.estGoTo(0);
+    expect(active("[start-frame]")).toBe(true);
+    expect(frame.hasAttribute("data-est-still")).toBe(false);
+  });
+
   it("blocks step0 -> step1 when inputs empty", () => {
     funnelFixture();
     initStepper();

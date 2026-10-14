@@ -36,6 +36,13 @@
   animation: est-kenburns 9s ease-out both;
 }
 
+/* ---- Initially active elements (engine marks them at init): no entrance replay
+   when this stylesheet arrives after first paint. Removed on the first state change. */
+[data-est-still] {
+  animation: none !important;
+  transition: none !important;
+}
+
 /* ---- Progress fill: engine sets width, this animates it ---- */
 [start-progress-fill] {
   transition: width 0.4s ease;
