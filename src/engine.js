@@ -86,7 +86,13 @@ export function hasStartPrefill(search) {
 
 export function initStepper(doc = document) {
   const $ = (sel, root = doc) => root.querySelector(sel);
-  const setActive = (el, on) => el && el.classList.toggle("is-active", on);
+  // Toggles .is-active. A real state change drops data-est-still, so only elements
+  // that were already active at init skip their entrance animation (see funnel.css).
+  const setActive = (el, on) => {
+    if (!el) return;
+    if (el.classList.contains("is-active") !== on) el.removeAttribute("data-est-still");
+    el.classList.toggle("is-active", on);
+  };
 
   const frame = $("[start-frame]");
   if (!frame) return;
@@ -133,6 +139,12 @@ export function initStepper(doc = document) {
   // Initial state. If arriving with a completed address prefilled from another page's
   // form, start past the address step so it never flashes before the auto-advance.
   setStep(hasStartPrefill() && addressIdx >= 0 ? addressIdx + 1 : 0);
+  // The initial screen is already visible at first paint, while funnel.css loads async;
+  // mark what is active now so its late-arriving entrance animation/transition does not
+  // replay (blink). The marker is dropped as soon as the element's state changes.
+  [frame, ...Object.values(finals), ...steps, ...photos].forEach((el) => {
+    if (el && el.classList.contains("is-active")) el.setAttribute("data-est-still", "");
+  });
   // Reveal the funnel now the correct step is positioned. Pairs with the page's
   // prefill visibility guard (html.est-prefill [start-frame]{visibility:hidden}).
   if (doc.documentElement) doc.documentElement.classList.add("est-ready");
