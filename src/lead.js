@@ -19,6 +19,13 @@
    - any [data-lead-retry] click re-sends a failed submission
    - form#wf-form-start-hosting-copy gets data-hs-do-not-collect="true" (Collected
      Forms must never capture it, even after a later consent).
+
+   Source fields (hidden HubSpot fields, empty ones omitted):
+   - utm_source/medium/campaign/term/content, gclid, fbclid, msclkid from this page's
+     query (start-redirect.js / header-address.js carry them here). Sent for everyone.
+   - lead_start (landing URL, origin + path) and first_referrer (external referrer of
+     the landing page) from sessionStorage "staymo_first_touch" (written by
+     prelead.js), read only with Cookiebot Statistics consent at send time.
    JS binds to data-* attributes and the form id only. No dependencies. */
 
 export const HS_ENDPOINT =
@@ -26,6 +33,20 @@ export const HS_ENDPOINT =
 export const FORM_SELECTOR = "form#wf-form-start-hosting-copy";
 export const RETRY_DELAYS = [1000, 2000, 4000];
 export const RESULT_HOLD_CAP = 10000;
+
+export const SOURCE_PARAMS = [
+  "utm_source",
+  "utm_medium",
+  "utm_campaign",
+  "utm_term",
+  "utm_content",
+  "gclid",
+  "fbclid",
+  "msclkid",
+];
+// Same key/format as prelead.js (duplicated: modules don't import each other).
+export const FIRST_TOUCH_KEY = "staymo_first_touch";
+export const SOURCE_MAX = 255;
 
 const GATE = Symbol.for("staymo.lead.gate");
 const CALCULATING = /^calculating(…|\.\.\.)?$/i;
@@ -62,8 +83,42 @@ export function readDomEstimate(doc = document) {
   return t && !CALCULATING.test(t) ? t : "";
 }
 
+const clip = (v) => String(v ?? "").trim().slice(0, SOURCE_MAX);
+
+// Ad / campaign params of the current page; absent or blank ones are left out.
+export function readSourceParams(search = "") {
+  const params = new URLSearchParams(search);
+  const out = {};
+  for (const k of SOURCE_PARAMS) {
+    const v = clip(params.get(k));
+    if (v) out[k] = v;
+  }
+  return out;
+}
+
+function sessionStore(win) {
+  try {
+    return win.sessionStorage || null;
+  } catch (e) {
+    return null;
+  }
+}
+
+// Landing page + external referrer, only with Statistics consent at send time.
+export function readFirstTouch(win = window, storage = sessionStore(win)) {
+  if (win.Cookiebot?.consent?.statistics !== true) return {};
+  try {
+    const entry = JSON.parse((storage && storage.getItem(FIRST_TOUCH_KEY)) || "null");
+    if (!entry || typeof entry !== "object") return {};
+    return { lead_start: clip(entry.landing), first_referrer: clip(entry.referrer) };
+  } catch (e) {
+    return {};
+  }
+}
+
 // Funnel values, read at send time.
-export function readLead(doc = document) {
+export function readLead(doc = document, win = doc.defaultView || window) {
+  const touch = readFirstTouch(win);
   const form = doc.querySelector(FORM_SELECTOR);
   const fullName = normalizeName(val(doc.querySelector('[data-input="full-name"]')));
   const phone =
@@ -74,7 +129,8 @@ export function readLead(doc = document) {
     full_name: fullName,
     ...splitName(fullName),
     phone,
-    lead_start: String(doc.title || "").trim(),
+    lead_start: touch.lead_start || "",
+    first_referrer: touch.first_referrer || "",
     property_address:
       val(doc.querySelector('[data-input-id="address-search"]')) ||
       val(doc.querySelector("#autocompleteHero")),
@@ -82,6 +138,7 @@ export function readLead(doc = document) {
       val(doc.querySelector('[data-input-id="beds-count"]')) ||
       val(doc.querySelector("[data-rooms-input]")),
     zip: val(doc.querySelector('[data-input-id="postal-code-result"]')),
+    ...readSourceParams(win.location?.search || ""),
   };
 }
 
@@ -100,6 +157,8 @@ const FIELD_ORDER = [
   "property_address",
   "property_bedrooms",
   "zip",
+  "first_referrer",
+  ...SOURCE_PARAMS,
 ];
 
 export function buildPayload(lead, { pageUri, pageName, hutk } = {}) {
@@ -228,7 +287,7 @@ export function initLead(doc = document, { win = window, delays = RETRY_DELAYS, 
   function start(estimate) {
     const f = flow;
     if (!f.armed || f.started || !estimate) return;
-    const lead = readLead(doc);
+    const lead = readLead(doc, win);
     if (!isContactComplete(lead)) return;
     f.started = true;
     f.lead = { ...lead, rental_estimation: estimate };
@@ -278,7 +337,7 @@ export function initLead(doc = document, { win = window, delays = RETRY_DELAYS, 
     if (!t || typeof t.closest !== "function") return;
     if (t.closest("[start-ready-button]")) {
       if (flow.armed) return; // double click / repeat in this enquiry
-      if (!isContactComplete(readLead(doc))) return; // the funnel shows its own errors
+      if (!isContactComplete(readLead(doc, win))) return; // the funnel shows its own errors
       flow.armed = true;
       return;
     }

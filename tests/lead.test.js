@@ -4,6 +4,10 @@ import {
   splitName,
   buildPayload,
   readDomEstimate,
+  readSourceParams,
+  readFirstTouch,
+  FIRST_TOUCH_KEY,
+  SOURCE_MAX,
   HS_ENDPOINT,
   RESULT_HOLD_CAP,
 } from "../src/lead.js";
@@ -59,6 +63,8 @@ beforeEach(() => {
   vi.useFakeTimers();
   delete window.estGoTo;
   delete window.Cookiebot;
+  sessionStorage.clear();
+  history.replaceState(null, "", "/start-hosting");
   document.cookie = "hubspotutk=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/";
   document.documentElement.removeAttribute("data-lead-state");
   fetchMock = vi.fn(async () => res(200));
@@ -123,7 +129,6 @@ describe("payload", () => {
       firstname: "Anna",
       lastname: "De Vries",
       phone: "+447700900123",
-      lead_start: "Start hosting | Staymo",
       rental_estimation: RANGE,
       property_address: "75 Marsh Wall, London",
       property_bedrooms: "3",
@@ -165,6 +170,115 @@ describe("payload", () => {
     window.dispatchEvent(new CustomEvent("staymo:estimate-ready", { detail: {} }));
     await flush();
     expect(sentFields().rental_estimation).toBe("£1,000 - £2,000");
+  });
+});
+
+describe("source fields", () => {
+  const LANDING = { landing: "https://www.staymo.co.uk/airbnb-management", referrer: "https://www.google.com/" };
+  async function run() {
+    destroy = initLead();
+    click("[start-ready-button]");
+    estimateReady();
+    await flush();
+    return sentFields();
+  }
+
+  it("sends utm_*, gclid, fbclid, msclkid from the page query, trimmed and capped", async () => {
+    const long = "x".repeat(SOURCE_MAX + 50);
+    history.replaceState(
+      null,
+      "",
+      `/start-hosting?address=x&utm_source=google&utm_medium=cpc&utm_campaign=%20spring%20&utm_term=airbnb+london` +
+        `&utm_content=ad1&gclid=${long}&fbclid=fb1&msclkid=ms1&hsa_acc=9&other=1`
+    );
+    const f = await run();
+    expect(f).toMatchObject({
+      utm_source: "google",
+      utm_medium: "cpc",
+      utm_campaign: "spring",
+      utm_term: "airbnb london",
+      utm_content: "ad1",
+      gclid: "x".repeat(SOURCE_MAX),
+      fbclid: "fb1",
+      msclkid: "ms1",
+    });
+    expect("hsa_acc" in f || "other" in f || "address" in f).toBe(false);
+    const names = sentBody().fields.map((x) => x.name);
+    expect(names.slice(-8)).toEqual(["utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content", "gclid", "fbclid", "msclkid"]);
+  });
+
+  it("sends the params without any consent", async () => {
+    window.Cookiebot = { consent: { statistics: false, marketing: false } };
+    history.replaceState(null, "", "/start-hosting?utm_source=meta");
+    expect((await run()).utm_source).toBe("meta");
+  });
+
+  it("no params → no source fields; blank params are left out", async () => {
+    history.replaceState(null, "", "/start-hosting?utm_source=%20%20&gclid=");
+    const f = await run();
+    for (const k of ["utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content", "gclid", "fbclid", "msclkid"]) {
+      expect(k in f).toBe(false);
+    }
+    expect(readSourceParams("")).toEqual({});
+  });
+
+  it("lead_start + first_referrer from the first-touch store with Statistics consent", async () => {
+    sessionStorage.setItem(FIRST_TOUCH_KEY, JSON.stringify(LANDING));
+    window.Cookiebot = { consent: { statistics: true } };
+    const f = await run();
+    expect(f.lead_start).toBe(LANDING.landing);
+    expect(f.first_referrer).toBe(LANDING.referrer);
+  });
+
+  it("lead_start and first_referrer are empty (not sent) without consent, even with a stored entry", async () => {
+    sessionStorage.setItem(FIRST_TOUCH_KEY, JSON.stringify(LANDING));
+    window.Cookiebot = { consent: { statistics: false } };
+    const f = await run();
+    expect("lead_start" in f).toBe(false);
+    expect("first_referrer" in f).toBe(false);
+  });
+
+  it("consent withdrawn before the send → not sent", async () => {
+    sessionStorage.setItem(FIRST_TOUCH_KEY, JSON.stringify(LANDING));
+    window.Cookiebot = { consent: { statistics: true } };
+    destroy = initLead();
+    click("[start-ready-button]");
+    window.Cookiebot = { consent: { statistics: false } };
+    estimateReady();
+    await flush();
+    expect("lead_start" in sentFields()).toBe(false);
+  });
+
+  it("direct landing: lead_start without first_referrer", async () => {
+    sessionStorage.setItem(FIRST_TOUCH_KEY, JSON.stringify({ landing: LANDING.landing, referrer: "" }));
+    window.Cookiebot = { consent: { statistics: true } };
+    const f = await run();
+    expect(f.lead_start).toBe(LANDING.landing);
+    expect("first_referrer" in f).toBe(false);
+  });
+
+  it("the Webflow «Lead Start» mirrors the landing URL", async () => {
+    sessionStorage.setItem(FIRST_TOUCH_KEY, JSON.stringify(LANDING));
+    window.Cookiebot = { consent: { statistics: true } };
+    let leadStart;
+    form.requestSubmit = vi.fn(() => {
+      leadStart = form.querySelector('[name="Lead Start"]').getAttribute("value");
+    });
+    await run();
+    expect(leadStart).toBe(LANDING.landing);
+  });
+
+  it("readFirstTouch survives broken JSON and a throwing storage", () => {
+    const win = { Cookiebot: { consent: { statistics: true } } };
+    expect(readFirstTouch(win, { getItem: () => "{oops" })).toEqual({});
+    expect(
+      readFirstTouch(win, {
+        getItem: () => {
+          throw new Error("denied");
+        },
+      })
+    ).toEqual({});
+    expect(readFirstTouch(win, null)).toEqual({});
   });
 });
 
@@ -363,7 +477,7 @@ describe("retries and outcome", () => {
       property_address: "75 Marsh Wall, London",
       zip: "E14 9GH",
       property_bedrooms: "3",
-      "Lead Start": "Start hosting | Staymo",
+      "Lead Start": "",
       rental_estimation: RANGE,
     });
     expect(form.querySelector('[name="rental_estimation"]').value).toBe(RANGE);

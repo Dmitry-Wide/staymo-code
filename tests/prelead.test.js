@@ -10,6 +10,10 @@ import {
   hasReferrerConsent,
   readStoredAddress,
   initAddressClear,
+  initFirstTouch,
+  captureFirstTouch,
+  externalReferrer,
+  FIRST_TOUCH_KEY,
 } from "../src/prelead.js";
 import { initBeds } from "../src/beds.js";
 
@@ -495,5 +499,89 @@ describe("readStoredAddress", () => {
     expect(readStoredAddress(at({ address: "a", postal: "p", ts: 5000 }), 2000)).toBe(null);
     expect(readStoredAddress(at({ address: "a", ts: 1000 }), 2000)).toBe(null);
     expect(readStoredAddress(null)).toBe(null);
+  });
+});
+
+describe("first touch (landing page + external referrer)", () => {
+  const HOST = "www.staymo.co.uk";
+  function makeWin({ consent, path = "/airbnb-management" } = {}) {
+    const listeners = {};
+    return {
+      Cookiebot: consent === undefined ? undefined : { consent: { statistics: consent, marketing: !consent } },
+      location: { host: HOST, origin: `https://${HOST}`, pathname: path, search: "?utm_source=google" },
+      addEventListener: (t, fn) => (listeners[t] = listeners[t] || []).push(fn),
+      fire: (t) => (listeners[t] || []).forEach((fn) => fn()),
+    };
+  }
+  function makeStore() {
+    const m = new Map();
+    return { getItem: (k) => (m.has(k) ? m.get(k) : null), setItem: (k, v) => m.set(k, String(v)), m };
+  }
+  const doc = (referrer) => ({ referrer });
+  const stored = (store) => JSON.parse(store.getItem(FIRST_TOUCH_KEY));
+
+  it("externalReferrer: empty → \"\", same host → null, other host → the referrer", () => {
+    expect(externalReferrer("", HOST)).toBe("");
+    expect(externalReferrer(`https://${HOST}/x`, HOST)).toBe(null);
+    expect(externalReferrer("https://www.google.com/", HOST)).toBe("https://www.google.com/");
+  });
+
+  it("with Statistics consent on the landing page: writes origin+path (no query) and the referrer", () => {
+    const store = makeStore();
+    initFirstTouch(makeWin({ consent: true }), doc("https://www.google.com/"), store);
+    expect(stored(store)).toEqual({ landing: `https://${HOST}/airbnb-management`, referrer: "https://www.google.com/" });
+  });
+
+  it("direct landing (no referrer) writes an empty referrer", () => {
+    const store = makeStore();
+    initFirstTouch(makeWin({ consent: true }), doc(""), store);
+    expect(stored(store).referrer).toBe("");
+  });
+
+  it("writes nothing without consent (none, false, or marketing only)", () => {
+    for (const consent of [undefined, false]) {
+      const store = makeStore();
+      initFirstTouch(makeWin({ consent }), doc("https://www.google.com/"), store);
+      expect(store.m.size).toBe(0);
+    }
+  });
+
+  it("consent accepted later on the same landing page writes then", () => {
+    const store = makeStore();
+    const win = makeWin({ consent: false });
+    initFirstTouch(win, doc("https://www.google.com/"), store);
+    expect(store.m.size).toBe(0);
+    win.Cookiebot.consent.statistics = true;
+    win.fire("CookiebotOnAccept");
+    expect(stored(store).landing).toBe(`https://${HOST}/airbnb-management`);
+  });
+
+  it("an internal page (same-host referrer) writes nothing, even after consent", () => {
+    const store = makeStore();
+    const win = makeWin({ consent: false, path: "/start-hosting" });
+    initFirstTouch(win, doc(`https://${HOST}/airbnb-management`), store);
+    win.Cookiebot.consent.statistics = true;
+    win.fire("CookiebotOnAccept");
+    expect(store.m.size).toBe(0);
+  });
+
+  it("writes once per visit: a later external landing keeps the first entry", () => {
+    const store = makeStore();
+    captureFirstTouch(makeWin({ consent: true }), doc("https://www.google.com/"), store);
+    expect(captureFirstTouch(makeWin({ consent: true, path: "/other" }), doc("https://bing.com/"), store)).toBe(false);
+    expect(stored(store).landing).toBe(`https://${HOST}/airbnb-management`);
+  });
+
+  it("a throwing storage is swallowed", () => {
+    const bad = {
+      getItem: () => {
+        throw new Error("denied");
+      },
+      setItem: () => {
+        throw new Error("denied");
+      },
+    };
+    expect(captureFirstTouch(makeWin({ consent: true }), doc(""), bad)).toBe(false);
+    expect(captureFirstTouch(makeWin({ consent: true }), doc(""), null)).toBe(false);
   });
 });
