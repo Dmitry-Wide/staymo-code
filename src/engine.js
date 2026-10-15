@@ -84,6 +84,20 @@ export function hasStartPrefill(search) {
   return !!(p.get("address") && p.get("postal-code") && p.get("beds"));
 }
 
+// Webflow renders the funnel buttons as plain <div>s: give them button semantics and
+// Enter/Space activation (same pattern as faq.js). Native controls are left alone.
+export function keyboardButton(el) {
+  if (!el || el.matches("button, input, a[href]") || el.hasAttribute("data-est-kbd")) return;
+  el.setAttribute("data-est-kbd", "");
+  if (!el.hasAttribute("role")) el.setAttribute("role", "button");
+  if (!el.hasAttribute("tabindex")) el.setAttribute("tabindex", "0");
+  el.addEventListener("keydown", (e) => {
+    if (e.key !== "Enter" && e.key !== " ") return;
+    e.preventDefault();
+    el.click();
+  });
+}
+
 export function initStepper(doc = document) {
   const $ = (sel, root = doc) => root.querySelector(sel);
   // Toggles .is-active. A real state change drops data-est-still, so only elements
@@ -220,6 +234,12 @@ export function initStepper(doc = document) {
   // "Start again" from the result/noresults screen -> back to step 0
   const restart = $("[start-restart]");
   if (restart) restart.addEventListener("click", () => setStep(0));
+
+  doc
+    .querySelectorAll(
+      "[start-start-button], [start-next], [start-step-back], [start-ready-button], [start-restart]"
+    )
+    .forEach(keyboardButton);
 
   // Let the valuation module drive the final transitions.
   if (typeof window !== "undefined") window.estGoTo = estGoTo;

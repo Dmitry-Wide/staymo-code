@@ -9,6 +9,7 @@ import {
   progressWidth,
   hasStartPrefill,
   initStepper,
+  keyboardButton,
 } from "../src/engine.js";
 
 describe("isValidEmail", () => {
@@ -389,5 +390,58 @@ describe("initStepper — funnel flow", () => {
     stepEl(1).querySelector("[start-step-back]").click();
     expect(stepActive(0)).toBe(true);
     expect(stepActive(1)).toBe(false);
+  });
+});
+
+describe("keyboard access for div buttons", () => {
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => vi.useRealTimers());
+
+  const key = (el, k) =>
+    el.dispatchEvent(new KeyboardEvent("keydown", { key: k, bubbles: true, cancelable: true }));
+
+  it("keyboardButton: role/tabindex + Enter/Space click; native controls untouched", () => {
+    document.body.innerHTML = `<div id="d"></div><button id="b"></button>`;
+    const d = document.getElementById("d");
+    const b = document.getElementById("b");
+    const onClick = vi.fn();
+    d.addEventListener("click", onClick);
+    keyboardButton(d);
+    keyboardButton(d); // idempotent: no double binding
+    keyboardButton(b);
+    expect(d.getAttribute("role")).toBe("button");
+    expect(d.getAttribute("tabindex")).toBe("0");
+    expect(b.hasAttribute("tabindex")).toBe(false);
+    key(d, "Enter");
+    key(d, " ");
+    key(d, "a");
+    expect(onClick).toHaveBeenCalledTimes(2);
+  });
+
+  it("div-based funnel passes by keyboard: Next/Back/restart get role+tabindex, Enter works", () => {
+    funnelFixture();
+    // live markup: the buttons are <div>s
+    document.querySelectorAll("[start-next], [start-step-back], [start-ready-button], [start-restart]").forEach((el) => {
+      const div = document.createElement("div");
+      for (const a of el.attributes) div.setAttribute(a.name, a.value);
+      el.replaceWith(div);
+    });
+    initStepper();
+    const sels = ["[start-next]", "[start-step-back]", "[start-ready-button]", "[start-restart]"];
+    sels.forEach((s) =>
+      document.querySelectorAll(s).forEach((el) => {
+        expect(el.getAttribute("role")).toBe("button");
+        expect(el.getAttribute("tabindex")).toBe("0");
+      })
+    );
+    window.estGoTo(1);
+    stepEl(1).querySelector('input[type="radio"]').checked = true;
+    key(stepEl(1).querySelector("[start-next]"), "Enter");
+    expect(stepActive(2)).toBe(true);
+    key(stepEl(2).querySelector("[start-step-back]"), " ");
+    expect(stepActive(1)).toBe(true);
+    window.estGoTo("result");
+    key(document.querySelector("[start-restart]"), "Enter");
+    expect(stepActive(0)).toBe(true);
   });
 });
