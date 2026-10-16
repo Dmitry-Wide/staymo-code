@@ -38,6 +38,19 @@ file of a .claude/skills/ dir that kit@main has). `gh pr merge` pins with `--mat
 (.claude/settings.json, any other workflow), a lock gone at the head, a truncated tree or a failed
 read of kit@main (through `gh api`) stay Dmitry's.
 
+Dmitry's «да» (decision 13, amended 2026-10-16, Dmitry: «я должен видеть только результат … чтобы
+система контролировала себя»), on both paths, the kit too: a PR that touches a lock passes when the
+merge pins its full head sha and his last prompt in this chat (the hook input's transcript_path: a
+main-chain entry of origin kind "human", so no tool result, hook note or another session's message) is a
+bare yes («да», «ок», «сливаем», «сливай», «давай») answering an assistant turn that asked «Сливаем
+owner/repo#N @ <sha7>?» for that PR and head, in the turn right before it (a wake, a peer's message or
+a hook note in between starts a new turn); «да?» is no yes. Any later prompt of his ends it; a push after the ask moves
+the head and GitHub refuses the pinned merge. One «да» covers every ask in that turn (a morning summary
+listing several locks), so an ask turn holds no other question. --auto, --admin and rulesets stay closed,
+Routines get no «да». A teammate's report is origin "peer", a task notification (a send_later or
+scheduled wake too, checked 2026-10-16) "task-notification": no «да» either. Residual risk: the transcript is a file on the agent's own disk, so an agent that writes a fake
+prompt into it passes; like the rest of this hook, it stops accidents, not a determined agent.
+
 Force-push is refused on every branch, not only main: the target of a bare `git push -f`
 cannot be read from the command line, and the studio rule is "no push --force" anyway.
 To replace your own branch, push it under a new name.
@@ -65,6 +78,9 @@ KIT = "dmitry-wide/studio-kit"  # lower case: GitHub names are case-insensitive
 WORKFLOW = ".github/workflows/studio-kit.yml"  # the kit's tools/studio-copy.py writes it from TEMPLATE
 TEMPLATE = "templates/studio-kit.yml"  # its flags as {flags}: "" (the core set) or "--skills"
 COPIES = re.compile(r"^\.claude/(rules/studio\.md|skills/[^/]+/.+)$")  # the other files a copy writes
+ASK = re.compile(r"Сливаем\s+([\w.-]+)/([\w.-]+)#(\d+)\s*@\s*([0-9a-f]{7,40})\?", re.I)
+YES = re.compile(r"(?:(?:да|ок|ok|окей|сливаем|сливай|давай)[^\w?]*)+", re.I)  # a bare yes: no «да?», nothing else
+CONSENT = set()  # {(owner/repo, number, sha prefix)}: Dmitry's «да» in this chat; decide() fills it
 MCP_MERGE = re.compile(r"mcp__.+__merge_pull_request")
 MCP_AUTO = re.compile(r"mcp__.+__enable_pr_auto_merge")
 FIELD_OPTS = ("-f", "-F", "--field", "--raw-field")
@@ -92,13 +108,15 @@ NAME_PR = ("Blocked by .claude/hooks/guard-git-push.py: name the pull request by
            "the hook reads its files before an agent merges it.")
 LOCKED = ("Blocked by .claude/hooks/guard-git-push.py: {} touches {}. A PR that touches the checks and "
           "locks (.github/workflows/, .claude/hooks/, .claude/settings.json; in the kit, action.yml, "
-          "tools/studio-copy.py, templates/studio-kit.yml) is Dmitry's to merge: give him the PR link.")
+          "tools/studio-copy.py, templates/studio-kit.yml) is Dmitry's to merge: ask him in this chat «Сливаем "
+          "<owner>/<repo>#<N> @ <sha7>?» and on his bare «да» merge with the head pinned, or give him the PR link.")
 COPY = ("Blocked by .claude/hooks/guard-git-push.py: {} touches {} and is no kit copy an agent may merge "
         "({}). A PR that touches the locks is Dmitry's to merge, unless outside the kit every lock in it "
-        "equals kit@main byte for byte and the merge pins the head: give him the PR link.")
+        "equals kit@main byte for byte and the merge pins the head: ask him in this chat «Сливаем "
+        "<owner>/<repo>#<N> @ <sha7>?» and on his bare «да» merge with the head pinned, or give him the PR link.")
 NOPIN = "the merge pins no head: add `--match-head-commit <sha>` (gh api: `-f sha=<sha>`)"
-GATE = ("Blocked by .claude/hooks/guard-git-push.py, the MCP merge gate: замок или нет вердикта — ссылку "
-        "Дмитрию. {}.")
+GATE = ("Blocked by .claude/hooks/guard-git-push.py, the MCP merge gate: замок или нет вердикта — спроси "
+        "Дмитрия в чате «Сливаем <owner>/<repo>#<N> @ <sha7>?» и сливай по его «да», или ссылку ему. {}.")
 UNKNOWN = ("Blocked by .claude/hooks/guard-git-push.py: could not read the files of {} from GitHub ({}), "
            "so it may touch the locks. Retry, or give Dmitry the PR link.")
 AUTO = ("Blocked by .claude/hooks/guard-git-push.py: --auto and --admin are off for agents. Wait for the "
@@ -309,7 +327,7 @@ def check_files(owner, repo, number, pin=""):
     if why:
         return UNKNOWN.format(pr, why)
     hit = next((f for f in files if LOCKS.search(f)), None)
-    if not hit:
+    if not hit or agreed(owner, repo, number, pin):
         return None
     if f"{owner}/{repo}".lower() == KIT:
         return LOCKED.format(pr, hit)
@@ -318,6 +336,42 @@ def check_files(owner, repo, number, pin=""):
         have, why = api_blobs(owner, repo, pin.lower())
         why = why or copy_equal(files, have)
     return COPY.format(pr, hit, why) if why else None
+
+
+def agreed(owner, repo, number, head):
+    """True when Dmitry's «да» in this chat answers «Сливаем owner/repo#number @ <sha7>?» for this full head."""
+    head = str(head).lower()
+    return bool(re.fullmatch(r"[0-9a-f]{40}", head)) and any(
+        (r, n) == (f"{owner}/{repo}".lower(), str(number)) and head.startswith(s) for r, n, s in CONSENT)
+
+
+def consents(path):
+    """{(owner/repo, number, sha prefix)} that Dmitry's last prompt in the transcript at path agrees to merge."""
+    asked, last = [], set()
+    try:
+        with open(path, encoding="utf-8") as f:
+            for line in f:
+                try:
+                    e = json.loads(line)
+                except ValueError:
+                    continue
+                if not isinstance(e, dict) or e.get("isSidechain"):
+                    continue
+                msg = e.get("message") if isinstance(e.get("message"), dict) else {}
+                body = msg.get("content")
+                text = body if isinstance(body, str) else " ".join(
+                    str(b.get("text", "")) for b in body or [] if isinstance(b, dict) and b.get("type") == "text")
+                origin = e.get("origin") if isinstance(e.get("origin"), dict) else {}
+                if e.get("type") == "assistant":
+                    asked.append(text)
+                elif e.get("type") == "user" and "toolUseResult" not in e:
+                    if origin.get("kind") == "human" and not e.get("isMeta"):
+                        last = ({(f"{o}/{r}".lower(), n, s.lower()) for o, r, n, s in ASK.findall(" ".join(asked))}
+                                if YES.fullmatch(text.strip()) else set())
+                    asked = []  # any other prompt (a wake, a peer, a hook note) starts a turn he has not answered
+    except (OSError, TypeError, UnicodeDecodeError):  # no transcript: no «да»
+        return set()
+    return last
 
 
 def head_is(owner, repo, number, pin):
@@ -413,7 +467,7 @@ def check_mcp_merge(inp):
     if why:
         return GATE.format(why)
     hit = next((f for f in files if LOCKS.search(f)), None)
-    if not hit:
+    if not hit or agreed(owner, repo, number, head):
         return None
     if f"{owner}/{repo}".lower() == KIT:
         return GATE.format(f"It touches {hit}: in the kit every lock is Dmitry's")
@@ -762,6 +816,52 @@ def selftest():
         fail += not ok
     kit_state.update(up=True, tree="false\n")
 
+    # Dmitry's «да»: his last prompt (origin human) answers the ask of the assistant turn before it.
+    def chat(*turns):
+        rows = []
+        for who, text, *kind in turns:
+            row = {"type": who, "message": {"role": who, "content": [{"type": "text", "text": text}]}}
+            if who == "user":
+                row["origin"] = {"kind": kind[0] if kind else "human"}
+            rows.append(json.dumps(row, ensure_ascii=False))
+        path = os.path.join(tmp, f"t{len(os.listdir(tmp))}.jsonl")
+        open(path, "w", encoding="utf-8").write("\n".join(rows) + "\n")
+        return path
+    ask = lambda n, r="Dmitry-Wide/studio-kit": ("assistant", f"Готово.\n\nСливаем {r}#{n} @ {sha(n)[:7]}?")
+    kit20 = LOCKED.format("Dmitry-Wide/studio-kit#20", hook_path)
+    with tempfile.TemporaryDirectory() as tmp:
+        consent = [
+            (chat(ask(20), ("user", "Да, сливаем.")), "gh pr merge 20 -R Dmitry-Wide/studio-kit" + pin(20), None),
+            (chat(ask(20), ("user", "ок")), f"gh api -X PUT repos/Dmitry-Wide/studio-kit/pulls/20/merge -f sha={sha(20)}", None),
+            (chat(ask(21, "o/r"), ("user", "да")), "gh pr merge 21 -R o/r" + pin(21), None),  # no copy, but agreed
+            (chat(ask(20), ("user", "да")), "gh pr merge 20 -R Dmitry-Wide/studio-kit", kit20),  # no pin
+            (chat(ask(20), ("user", "да")), "gh pr merge 20 -R Dmitry-Wide/studio-kit --match-head-commit "
+             + sha(20)[:12], kit20),  # a short pin
+            (chat(ask(19), ("user", "да")), "gh pr merge 20 -R Dmitry-Wide/studio-kit" + pin(20), kit20),  # another PR
+            (chat(("assistant", "Сливаем Dmitry-Wide/studio-kit#20 @ 1234567?"), ("user", "да")),
+             "gh pr merge 20 -R Dmitry-Wide/studio-kit" + pin(20), kit20),  # another head
+            (chat(ask(20), ("user", "да?")), "gh pr merge 20 -R Dmitry-Wide/studio-kit" + pin(20), kit20),
+            (chat(ask(20), ("user", "ok", "task-notification"), ("assistant", "Удалить ветку?"), ("user", "да")),
+             "gh pr merge 20 -R Dmitry-Wide/studio-kit" + pin(20), kit20),  # «да» answers the wake's turn
+            (chat(ask(20), ("user", "x", "peer"), ("assistant", "Отчёт принят."), ("user", "да")),
+             "gh pr merge 20 -R Dmitry-Wide/studio-kit" + pin(20), kit20),  # the ask is a turn older
+            (chat(ask(20), ("user", "да, но сначала поправь текст")), "gh pr merge 20 -R Dmitry-Wide/studio-kit"
+             + pin(20), kit20),
+            (chat(ask(20), ("user", "да", "peer")), "gh pr merge 20 -R Dmitry-Wide/studio-kit" + pin(20), kit20),
+            (chat(ask(20), ("user", "да"), ("assistant", "Ок."), ("user", "а что с сайтом?")),
+             "gh pr merge 20 -R Dmitry-Wide/studio-kit" + pin(20), kit20),  # a later prompt ends it
+            (chat(("user", "да"), ask(20)), "gh pr merge 20 -R Dmitry-Wide/studio-kit" + pin(20), kit20),  # asked after
+            (chat(ask(20), ("user", "да")), "gh pr merge 20 -R Dmitry-Wide/studio-kit --auto" + pin(20), AUTO),
+            (None, "gh pr merge 20 -R Dmitry-Wide/studio-kit" + pin(20), kit20),
+            (os.path.join(tmp, "missing.jsonl"), "gh pr merge 20 -R Dmitry-Wide/studio-kit" + pin(20), kit20),
+        ]
+        for path, cmd, want in consent:
+            got = decide(json.dumps({"transcript_path": path, "tool_name": "Bash", "tool_input": {"command": cmd}}))
+            ok = got == want
+            print(("  ok    " if ok else "  FAIL  ") + f"да {cmd[:60]!r} -> {(got or 'allow')[:90]}")
+            fail += not ok
+    CONSENT.clear()
+
     # The MCP merge gate, on real git: a bare origin with refs/pull/<N>/head, a clone of it, kit@main as above.
     saved = {k: os.environ.get(k) for k in ("CLAUDE_PROJECT_DIR", "GIT_CONFIG_GLOBAL", "GIT_CONFIG_NOSYSTEM")}
     os.environ.update(GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM="1")
@@ -835,6 +935,14 @@ def selftest():
             (work, call(name="mcp__github__enable_pr_auto_merge"), AUTO),
             (work, '{"tool_name": "mcp__github__merge_pull_request", "tool_input": "x"}', "could not read this call"),
         ]
+        kit_call = json.loads(call(6, owner="Dmitry-Wide", repo="studio-kit"))
+        yes = os.path.join(d, "yes.jsonl")
+        open(yes, "w", encoding="utf-8").write("\n".join(json.dumps(r, ensure_ascii=False) for r in [
+            {"type": "assistant", "message": {"content": f"Сливаем Dmitry-Wide/studio-kit#6 @ {prs[6][:7]}?"}},
+            {"type": "user", "origin": {"kind": "human"}, "message": {"content": "да"}}]) + "\n")
+        gate += [(kit_work, json.dumps(dict(kit_call, transcript_path=yes)), None),  # Dmitry's «да» in the kit
+                 (kit_work, json.dumps(dict(kit_call, transcript_path=yes, tool_input=dict(
+                     kit_call["tool_input"], commit_message="merge"))), "lacks the verdict line")]
         for cwd, raw, want in gate:
             os.environ["CLAUDE_PROJECT_DIR"] = cwd
             DEADLINE = time.monotonic() + 7
@@ -906,6 +1014,8 @@ def decide(raw):
     try:
         call = json.loads(raw)
         name, args = str(call.get("tool_name") or ""), call.get("tool_input") or {}
+        CONSENT.clear()
+        CONSENT.update(consents(call.get("transcript_path")))
         if MCP_AUTO.fullmatch(name):
             return AUTO
         if MCP_MERGE.fullmatch(name):
