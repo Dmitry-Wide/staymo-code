@@ -11,7 +11,7 @@ beforeEach(() => { document.body.innerHTML = ''; });
 afterEach(() => { observer?.disconnect(); observer = undefined; });
 
 function article(value = JSON.stringify(faq), text = 'Why Dubai? A visible answer.') {
-  document.body.innerHTML = '<div data-dubai-meta="faq"></div><article data-dubai-blog-body></article>';
+  document.body.innerHTML = '<div data-dubai-meta="faq"></div><article data-dubai-blog-body></article><div data-dubai-faq-target></div>';
   document.querySelector('[data-dubai-meta]').textContent = value;
   document.querySelector('article').textContent = text;
 }
@@ -22,6 +22,7 @@ describe('Dubai FAQ schema', () => {
     const scripts = document.querySelectorAll('script[data-dubai-faq]');
     expect(scripts).toHaveLength(1);
     expect(JSON.parse(scripts[0].textContent)).toEqual(faq);
+    expect(scripts[0].parentElement.hasAttribute('data-dubai-faq-target')).toBe(true);
   });
 
   it.each(['', 'broken JSON', 'null', '{}', '{"@type":"FAQPage","mainEntity":[null]}'])

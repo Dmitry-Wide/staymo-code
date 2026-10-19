@@ -1,12 +1,14 @@
 /* Dubai blog FAQ and catalogue CTA. No network requests or form handling.
    Contract: data-dubai-meta="faq" holds the native CMS-bound JSON text;
    data-dubai-blog-body marks the article; data-dubai-blog-list marks the list;
+   data-dubai-faq-target is inside the native Schema | FAQPage HtmlEmbed;
    data-cta-template is the hidden, Designer-authored CTA source.
    CSS hides only [data-cta-template]; the clone keeps all native styles. */
 export function initFAQ(root = document) {
   const carrier = root.querySelector('[data-dubai-meta="faq"]');
   const body = root.querySelector('[data-dubai-blog-body]');
-  if (!carrier || !body || !carrier.textContent.trim()) return;
+  const target = root.querySelector('[data-dubai-faq-target]');
+  if (!carrier || !body || !target || !carrier.textContent.trim()) return;
   let faq;
   try { faq = JSON.parse(carrier.textContent); } catch { return; }
   const normalize = text => text.replace(/\s+/g, ' ').trim();
@@ -22,7 +24,7 @@ export function initFAQ(root = document) {
   script.type = 'application/ld+json';
   script.dataset.dubaiFaq = '';
   script.textContent = JSON.stringify(faq).replace(/</g, '\\u003c');
-  carrier.after(script);
+  target.append(script);
 }
 
 export function initCatalogueCTA(root = document) {
