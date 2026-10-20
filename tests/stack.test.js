@@ -194,7 +194,7 @@ describe("initStack", () => {
     win.scrollY = 1900;
     placeCards(win);
     initStack(win, doc);
-    expect(s.queries).toEqual([MOTION, DESKTOP, PHONE, REDUCE]);
+    expect(s.queries).toEqual([DESKTOP, DESKTOP, PHONE, REDUCE]);
     const photos = s.tweens.filter((t) => t.kind === "fromTo");
     expect(photos.map((t) => t.target.getAttribute("src"))).toEqual(["a.avif", "b.avif"]);
     const { to, from } = photos[1];
@@ -232,6 +232,13 @@ describe("initStack", () => {
     initStack(makeWin(s), doc);
     const photos = s.tweens.filter((x) => x.kind === "fromTo");
     expect(photos.map((x) => x.target.getAttribute("src"))).toEqual(["b.avif"]);
+  });
+
+  it("phone: no photo scale, only the title reveal", () => {
+    const s = stubGsap([MOTION, PHONE]);
+    initStack(makeWin(s), doc);
+    expect(s.tweens.filter((x) => x.kind === "fromTo")).toHaveLength(0);
+    expect(s.tweens.filter((x) => x.kind === "from")).toHaveLength(1);
   });
 
   it("reduced motion: no tweens, cards in plain flow until the flip back", () => {
