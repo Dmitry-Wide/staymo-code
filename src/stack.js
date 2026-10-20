@@ -24,7 +24,9 @@
    card's top padding, so when the stack ends the list's top stops level with
    the last panel's top, not its bottom with the stack's bottom (Dmitry,
    same day).
-   Photos: every card's photo but the last scales 1.1 → 1, power1.out, over
+   Photos (≥768 only; phone: none, Dmitry 2026-10-20 «на мобилке хотим
+   отключить анимацию скейла картинок»): every card's photo but the last
+   scales 1.1 → 1, power1.out, over
    the 420 px after its card sticks, scrub: true (zenarate scrubs 0.3; a
    numeric scrub over Lenis is a second lag). The start is the card's static
    offset: a stuck sticky card reports its stuck position, so it is measured
@@ -45,7 +47,6 @@
    Runtime: GSAP + ScrollTrigger from the Webflow CDN, loaded before module
    scripts; never loads its own. Lenis already syncs ScrollTrigger. */
 
-const MOTION = "(prefers-reduced-motion: no-preference)";
 const DESKTOP = "(min-width: 768px) and (prefers-reduced-motion: no-preference)";
 const PHONE = "(max-width: 767px) and (prefers-reduced-motion: no-preference)";
 const REDUCE = "(prefers-reduced-motion: reduce)";
@@ -184,7 +185,7 @@ export function initStack(win = window, doc = document) {
 
   const mm = gsap.matchMedia();
   all.forEach(({ cards, title }) => {
-    mm.add(MOTION, () => {
+    mm.add(DESKTOP, () => {
       cards.slice(0, -1).forEach((card, i) => {
         const img = card.querySelector("[data-stack-photo]");
         // A photo already on screen at init stays as painted (scale 1): the
