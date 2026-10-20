@@ -37,6 +37,7 @@ function makeWin(stub, { reduce = false } = {}) {
     gsap: stub?.gsap,
     ScrollTrigger: stub?.ScrollTrigger,
     scrollY: 0,
+    innerHeight: 900,
     getComputedStyle: (el) => (el.hasAttribute("data-stack-card") ? { top: "80px" } : hw.getComputedStyle(el)),
     matchMedia: (q) => ({ matches: q === REDUCE ? reduce : false }),
     requestAnimationFrame: (fn) => fn(),
@@ -77,6 +78,7 @@ beforeEach(() => {
   hw = new Window({ url: "https://staymo.webflow.io/dubai/monthly-rentals" });
   doc = hw.document;
   doc.body.innerHTML = SECTION;
+  doc.querySelector("h2").getBoundingClientRect = () => ({ top: 2000 }); // below the fold
 });
 
 afterEach(() => {
@@ -214,6 +216,13 @@ describe("initStack", () => {
     const p = stubGsap([MOTION, PHONE]);
     initStack(makeWin(p), doc);
     expect(p.tweens.find((x) => x.kind === "from").vars.y).toBe(8);
+  });
+
+  it("title already above 85% at init: no reveal, nothing hidden", () => {
+    const s = stubGsap([MOTION, DESKTOP]);
+    doc.querySelector("h2").getBoundingClientRect = () => ({ top: 500 });
+    initStack(makeWin(s), doc);
+    expect(s.tweens.find((x) => x.kind === "from")).toBeUndefined();
   });
 
   it("reduced motion: no tweens, cards in plain flow until the flip back", () => {
