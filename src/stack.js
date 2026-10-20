@@ -15,8 +15,15 @@
        [data-stack-card]        a card, position: sticky (CSS)
          [data-stack-photo]     its photo, inside a rounded overflow-hidden frame
 
-   Active item: the last card whose top is at most 40 px below the cards'
-   sticky top (zenarate: a 60 px line with top 0 + 20 px padding), on scroll.
+   Active item: the last card whose top has reached the list's top (+8 px),
+   or 40 px below the cards' sticky top where the list is hidden (phone), on
+   scroll: a card is current once it is level with the list (Dmitry
+   2026-10-20 on staging: the last card sat fully beside the list while the
+   third item was lit; zenarate's 60 px line under the header).
+   List end (≥768): its min-height is the last card's height minus the
+   card's top padding, so when the stack ends the list's top stops level with
+   the last panel's top, not its bottom with the stack's bottom (Dmitry,
+   same day).
    Photos: every card's photo but the last scales 1.1 → 1, power1.out, over
    the 420 px after its card sticks, scrub: true (zenarate scrubs 0.3; a
    numeric scrub over Lenis is a second lag). The start is the card's static
@@ -40,6 +47,8 @@ const PHONE = "(max-width: 767px) and (prefers-reduced-motion: no-preference)";
 const REDUCE = "(prefers-reduced-motion: reduce)";
 const CURRENT = "is-current";
 const LINE_PX = 40;
+const NAV_TOL_PX = 8;
+const WIDE = "(min-width: 768px)";
 const SETTLE_PX = 420;
 const WAIT_MS = 5000;
 const POLL_MS = 50;
@@ -52,7 +61,7 @@ export function parts(stack) {
   const items = links
     .map((a) => ({ a, dots: Array.from(a.querySelectorAll("[data-stack-dot]")), card: cards.find((c) => `#${c.id}` === a.getAttribute("href")) }))
     .filter((it) => it.card);
-  return { cards, items, title: stack.querySelector("h2") };
+  return { cards, items, nav: stack.querySelector("[data-stack-nav]"), title: stack.querySelector("h2") };
 }
 
 // The cards' sticky top in px (the header height, a CSS variable).
@@ -88,20 +97,42 @@ export function setCurrent(items, card) {
   });
 }
 
-function watchCurrent({ cards, items }, win) {
+// The line a card's top must reach to be current: the list's top when it is
+// shown, never above 40 px under the sticky top.
+export function activeLine(nav, cards, win = window) {
+  const base = stickyTop(cards[0], win) + LINE_PX;
+  const r = nav && nav.getBoundingClientRect();
+  return r && r.height ? Math.max(base, r.top + NAV_TOL_PX) : base;
+}
+
+// The list stops with its top level with the last panel's top.
+export function fitNav(nav, cards, win = window) {
+  if (!nav || !cards.length) return;
+  const last = cards[cards.length - 1];
+  const h = last.offsetHeight - (parseFloat(win.getComputedStyle(last).paddingTop) || 0);
+  nav.style.minHeight = win.matchMedia(WIDE).matches && h > 0 ? `${h}px` : "";
+}
+
+function watchCurrent({ cards, items, nav }, win) {
   if (!cards.length || !items.length) return;
   let queued = false;
   let last = null;
   const update = () => {
     queued = false;
-    const card = cards[currentIndex(cards, stickyTop(cards[0], win) + LINE_PX)];
+    const card = cards[currentIndex(cards, activeLine(nav, cards, win))];
     if (card !== last) setCurrent(items, (last = card));
   };
+  const fit = () => {
+    fitNav(nav, cards, win);
+    update();
+  };
+  win.addEventListener("resize", () => win.requestAnimationFrame(fit), { passive: true });
+  win.addEventListener("load", fit, { once: true });
+  fitNav(nav, cards, win);
   const queue = () => {
     if (!queued) (queued = true), win.requestAnimationFrame(update);
   };
   win.addEventListener("scroll", queue, { passive: true });
-  win.addEventListener("resize", queue, { passive: true });
   update();
 }
 
