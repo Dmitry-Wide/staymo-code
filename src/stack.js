@@ -28,12 +28,16 @@
    the 420 px after its card sticks, scrub: true (zenarate scrubs 0.3; a
    numeric scrub over Lenis is a second lag). The start is the card's static
    offset: a stuck sticky card reports its stuck position, so it is measured
-   with the cards set to position: static, never from where it sticks.
+   with the cards set to position: static, never from where it sticks. A
+   photo already on screen when the module starts (a tall screen, a reload
+   mid-section) gets no settle: snapping it to 1.1 after the first paint is
+   a flash.
    Click: the card's static offset minus the sticky top, through Lenis
    (0.8 s easeInOutQuad, as zenarate's own 800 ms scroll); Lenis is the one
    scroll authority, `window.staymoLenis` from `Code | Lenis`; the card then
    takes focus, as with an anchor. Without Lenis the native anchor stays.
-   Title: opacity 0 → 1, y 16 (phone 8), 0.6 s power2.out at top 85%, once.
+   Title: opacity 0 → 1, y 16 (phone 8), 0.6 s power2.out at top 85%, once;
+   none when the title is already on screen at init.
    Reduced motion: no photo scale, no title reveal, cards in plain flow
    (Webflow styles cannot hold a reduced-motion query), the active item
    still follows, a click jumps.
@@ -85,6 +89,11 @@ export function currentIndex(cards, line) {
     if (c.getBoundingClientRect().top <= line) i = k;
   });
   return i;
+}
+
+export function inView(el, win = window) {
+  const r = el.getBoundingClientRect();
+  return r.bottom > 0 && r.top < win.innerHeight;
 }
 
 export function setCurrent(items, card) {
@@ -178,7 +187,9 @@ export function initStack(win = window, doc = document) {
     mm.add(MOTION, () => {
       cards.slice(0, -1).forEach((card, i) => {
         const img = card.querySelector("[data-stack-photo]");
-        if (!img) return;
+        // A photo already on screen at init stays as painted (scale 1): the
+        // scrub would snap it to 1.1 after the first paint.
+        if (!img || inView(img, win)) return;
         // The frame keeps its corners round while the photo is transformed.
         if (img.parentElement) img.parentElement.style.isolation = "isolate";
         gsap.fromTo(
@@ -198,7 +209,10 @@ export function initStack(win = window, doc = document) {
         );
       });
     });
-    if (title) {
+    // Same for a title already on screen at init: hiding it then would
+    // flash the end state before the start (page restored mid-section, or a
+    // tall screen; motion QA 2026-10-20).
+    if (title && !inView(title, win)) {
       const reveal = (y) => () =>
         gsap.from(title, { opacity: 0, y, duration: 0.6, ease: "power2.out", scrollTrigger: { trigger: title, start: "top 85%", once: true } });
       mm.add(DESKTOP, reveal(16));

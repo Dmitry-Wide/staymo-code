@@ -37,6 +37,7 @@ function makeWin(stub, { reduce = false } = {}) {
     gsap: stub?.gsap,
     ScrollTrigger: stub?.ScrollTrigger,
     scrollY: 0,
+    innerHeight: 900,
     getComputedStyle: (el) => (el.hasAttribute("data-stack-card") ? { top: "80px" } : hw.getComputedStyle(el)),
     matchMedia: (q) => ({ matches: q === REDUCE ? reduce : false }),
     requestAnimationFrame: (fn) => fn(),
@@ -77,6 +78,8 @@ beforeEach(() => {
   hw = new Window({ url: "https://staymo.webflow.io/dubai/monthly-rentals" });
   doc = hw.document;
   doc.body.innerHTML = SECTION;
+  doc.querySelector("h2").getBoundingClientRect = () => ({ top: 2000, bottom: 2050 }); // below the fold
+  doc.querySelectorAll("[data-stack-photo]").forEach((i) => (i.getBoundingClientRect = () => ({ top: 2000, bottom: 2300 })));
 });
 
 afterEach(() => {
@@ -214,6 +217,21 @@ describe("initStack", () => {
     const p = stubGsap([MOTION, PHONE]);
     initStack(makeWin(p), doc);
     expect(p.tweens.find((x) => x.kind === "from").vars.y).toBe(8);
+  });
+
+  it("title already on screen at init (even below 85%): no reveal, nothing hidden", () => {
+    const s = stubGsap([MOTION, DESKTOP]);
+    doc.querySelector("h2").getBoundingClientRect = () => ({ top: 850, bottom: 900 });
+    initStack(makeWin(s), doc);
+    expect(s.tweens.find((x) => x.kind === "from")).toBeUndefined();
+  });
+
+  it("photo already on screen at init: no settle for it, nothing snaps", () => {
+    const s = stubGsap([MOTION, DESKTOP]);
+    doc.querySelectorAll("[data-stack-photo]")[0].getBoundingClientRect = () => ({ top: 400, bottom: 700 });
+    initStack(makeWin(s), doc);
+    const photos = s.tweens.filter((x) => x.kind === "fromTo");
+    expect(photos.map((x) => x.target.getAttribute("src"))).toEqual(["b.avif"]);
   });
 
   it("reduced motion: no tweens, cards in plain flow until the flip back", () => {
