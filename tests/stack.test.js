@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { Window } from "happy-dom";
-import { initStack, parts, currentIndex, setCurrent, staticTops, easeInOutQuad } from "../src/stack.js";
+import { initStack, parts, currentIndex, setCurrent, staticTops, easeInOutQuad, activeLine, fitNav } from "../src/stack.js";
 
 const MOTION = "(prefers-reduced-motion: no-preference)";
 const DESKTOP = "(min-width: 768px) and (prefers-reduced-motion: no-preference)";
@@ -120,6 +120,42 @@ describe("currentIndex / setCurrent", () => {
     expect(p.items.map((it) => it.dots[0].classList.contains("is-current"))).toEqual([false, false, true]);
     expect(p.items[2].a.getAttribute("aria-current")).toBe("true");
     expect(p.items[0].a.hasAttribute("aria-current")).toBe(false);
+  });
+});
+
+describe("activeLine / fitNav", () => {
+  it("is the list's top + 8 when the list is shown, never above sticky top + 40", () => {
+    const win = makeWin();
+    const p = parts(doc.querySelector("[data-stack]"));
+    expect(activeLine(p.nav, p.cards, win)).toBe(120); // hidden list (phone)
+    p.nav.getBoundingClientRect = () => ({ top: 225, height: 140 });
+    expect(activeLine(p.nav, p.cards, win)).toBe(233);
+    p.nav.getBoundingClientRect = () => ({ top: 90, height: 140 });
+    expect(activeLine(p.nav, p.cards, win)).toBe(120);
+  });
+
+  it("≥768: the list is as tall as the last card without its top padding; phone: cleared", () => {
+    const win = makeWin();
+    const p = parts(doc.querySelector("[data-stack]"));
+    const last = p.cards[2];
+    Object.defineProperty(last, "offsetHeight", { value: 338 });
+    win.getComputedStyle = () => ({ top: "80px", paddingTop: "20px" });
+    win.matchMedia = (q) => ({ matches: q === "(min-width: 768px)" });
+    fitNav(p.nav, p.cards, win);
+    expect(p.nav.style.minHeight).toBe("318px");
+    win.matchMedia = () => ({ matches: false });
+    fitNav(p.nav, p.cards, win);
+    expect(p.nav.style.minHeight).toBe("");
+  });
+
+  it("scroll: the card level with the list's top is current", () => {
+    const win = makeWin(stubGsap([MOTION]));
+    placeCards(win);
+    doc.querySelector("[data-stack-nav]").getBoundingClientRect = () => ({ top: 325, height: 140 });
+    initStack(win, doc);
+    win.scrollY = 1680; // c at 320: beside the list, b stuck at 80
+    win.fire("scroll");
+    expect(doc.querySelectorAll("[data-stack-nav] a")[2].classList.contains("is-current")).toBe(true);
   });
 });
 
