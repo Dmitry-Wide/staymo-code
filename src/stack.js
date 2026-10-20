@@ -37,7 +37,7 @@
    scroll authority, `window.staymoLenis` from `Code | Lenis`; the card then
    takes focus, as with an anchor. Without Lenis the native anchor stays.
    Title: opacity 0 → 1, y 16 (phone 8), 0.6 s power2.out at top 85%, once;
-   none when the title is already above that line at init.
+   none when the title is already on screen at init.
    Reduced motion: no photo scale, no title reveal, cards in plain flow
    (Webflow styles cannot hold a reduced-motion query), the active item
    still follows, a click jumps.
@@ -209,10 +209,10 @@ export function initStack(win = window, doc = document) {
         );
       });
     });
-    // Same for a title already past its start at init: hiding it
-    // then would flash the end state before the start (page restored
-    // mid-section, or a tall screen; motion QA 2026-10-20).
-    if (title && title.getBoundingClientRect().top > win.innerHeight * 0.85) {
+    // Same for a title already on screen at init: hiding it then would
+    // flash the end state before the start (page restored mid-section, or a
+    // tall screen; motion QA 2026-10-20).
+    if (title && !inView(title, win)) {
       const reveal = (y) => () =>
         gsap.from(title, { opacity: 0, y, duration: 0.6, ease: "power2.out", scrollTrigger: { trigger: title, start: "top 85%", once: true } });
       mm.add(DESKTOP, reveal(16));

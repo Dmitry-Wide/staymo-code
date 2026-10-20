@@ -78,7 +78,7 @@ beforeEach(() => {
   hw = new Window({ url: "https://staymo.webflow.io/dubai/monthly-rentals" });
   doc = hw.document;
   doc.body.innerHTML = SECTION;
-  doc.querySelector("h2").getBoundingClientRect = () => ({ top: 2000 }); // below the fold
+  doc.querySelector("h2").getBoundingClientRect = () => ({ top: 2000, bottom: 2050 }); // below the fold
   doc.querySelectorAll("[data-stack-photo]").forEach((i) => (i.getBoundingClientRect = () => ({ top: 2000, bottom: 2300 })));
 });
 
@@ -219,9 +219,9 @@ describe("initStack", () => {
     expect(p.tweens.find((x) => x.kind === "from").vars.y).toBe(8);
   });
 
-  it("title already above 85% at init: no reveal, nothing hidden", () => {
+  it("title already on screen at init (even below 85%): no reveal, nothing hidden", () => {
     const s = stubGsap([MOTION, DESKTOP]);
-    doc.querySelector("h2").getBoundingClientRect = () => ({ top: 500 });
+    doc.querySelector("h2").getBoundingClientRect = () => ({ top: 850, bottom: 900 });
     initStack(makeWin(s), doc);
     expect(s.tweens.find((x) => x.kind === "from")).toBeUndefined();
   });
