@@ -1,5 +1,5 @@
 import { beforeEach, afterEach, describe, expect, it } from 'vitest';
-import { initFAQ, initCatalogueCTA } from '../src/dubai-blog.js';
+import { initFAQ, initCatalogueCTA, isCataloguePath } from '../src/dubai-blog.js';
 
 const faq = {
   '@context': 'https://schema.org', '@type': 'FAQPage',
@@ -70,5 +70,15 @@ describe('Dubai catalogue CTA', () => {
     expect(list.children).toHaveLength(3);
     expect(list.children[2].hasAttribute('data-dubai-cta')).toBe(true);
     expect(list.querySelectorAll('[data-dubai-cta]')).toHaveLength(1);
+  });
+});
+
+describe('Dubai catalogue path', () => {
+  it.each(['/dubai/blog', '/dubai/blog/', '/dubai-blogs', '/dubai-blogs/'])('matches the listing: %s', path => {
+    expect(isCataloguePath(path)).toBe(true);
+  });
+
+  it.each(['/dubai', '/dubai/blog/some-post', '/dubai-blog/some-post', '/blog', '/dubai/blogs'])('ignores other pages: %s', path => {
+    expect(isCataloguePath(path)).toBe(false);
   });
 });

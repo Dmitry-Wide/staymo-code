@@ -51,9 +51,12 @@ export function initCatalogueCTA(root = document) {
   return observer;
 }
 
+// Listing moved from /dubai-blogs to /dubai/blog (old URL 301s); accept both, with or without a trailing slash.
+export const isCataloguePath = path => /^\/(dubai-blogs|dubai\/blog)\/?$/.test(path);
+
 if (typeof document !== 'undefined') {
   const init = () => {
-    if (location.pathname === '/dubai-blogs') initCatalogueCTA();
+    if (isCataloguePath(location.pathname)) initCatalogueCTA();
     if (location.pathname.startsWith('/dubai-blog/')) initFAQ();
   };
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init, { once: true });
