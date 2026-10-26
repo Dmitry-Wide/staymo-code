@@ -32,7 +32,10 @@
    Nav panels (initNavScrollClose, site-wide, independent of the address root): at
    ≥768px an open .hdr__nav > .hdr__dd (Webflow dropdown: its .w-dropdown-toggle gets
    .w--open) closes once the page scrolls NAV_CLOSE_SCROLL px from where it opened, via
-   jQuery(dd).triggerHandler("w-close.w-dropdown"). Webflow-owned markup, so classes,
+   jQuery(dd).triggerHandler("w-close.w-dropdown"). A smooth-scroll glide still running
+   when the panel opens (Lenis) moves that start point along with it until scroll events
+   pause NAV_SETTLE_GAP_MS (at most NAV_SETTLE_MAX_MS), so only a scroll started after the
+   open closes it. Webflow-owned markup, so classes,
    not data-*. Never ≤767 (the burger drawer's accordions); no jQuery → no-op; the scroll
    listener exists only while a panel is open. */
 
@@ -41,6 +44,8 @@ export const STORAGE_TTL_MS = 30 * 60 * 1000;
 export const SCROLL_HYSTERESIS = 8;
 export const NO_HERO_OFFSET = 24;
 export const NAV_CLOSE_SCROLL = 8;
+export const NAV_SETTLE_GAP_MS = 100;
+export const NAV_SETTLE_MAX_MS = 1000;
 export const NAV_DESKTOP_QUERY = "(min-width: 768px)";
 export const PRECISE_ACCURACY_M = 100;
 export const GEO_OPTIONS = { enableHighAccuracy: true, timeout: 10000, maximumAge: 60000 };
@@ -659,11 +664,21 @@ export function initNavScrollClose(win = window, doc = document) {
   if (!toggles.length) return null;
   const mq = typeof win.matchMedia === "function" ? win.matchMedia(NAV_DESKTOP_QUERY) : null;
   const isDesktop = () => Boolean(mq && mq.matches);
-  let open = null; // { dd, y } while a panel is open
+  // { dd, y, at, last, settling } while a panel is open; y follows the glide while settling.
+  let open = null;
   let listening = false;
 
   const onScroll = () => {
     if (!open || !isDesktop()) return;
+    if (open.settling) {
+      const now = Date.now();
+      if (now - open.last < NAV_SETTLE_GAP_MS && now - open.at < NAV_SETTLE_MAX_MS) {
+        open.y = win.scrollY;
+        open.last = now;
+        return;
+      }
+      open.settling = false;
+    }
     if (Math.abs(win.scrollY - open.y) < NAV_CLOSE_SCROLL) return;
     const { dd } = open;
     open = null;
@@ -683,7 +698,10 @@ export function initNavScrollClose(win = window, doc = document) {
       return listen(false);
     }
     const dd = toggle.parentElement;
-    if (!open || open.dd !== dd) open = { dd, y: win.scrollY };
+    if (!open || open.dd !== dd) {
+      const now = Date.now();
+      open = { dd, y: win.scrollY, at: now, last: now, settling: true };
+    }
     listen(true);
   };
 
