@@ -212,6 +212,31 @@ describe("initStepper — funnel flow", () => {
     expect(frame.hasAttribute("data-est-still")).toBe(false);
   });
 
+  it("pushes funnel events to dataLayer: steps, submit, outcome; no personal data", () => {
+    funnelFixture();
+    fillAddress();
+    delete window.dataLayer;
+    initStepper();
+    document.querySelector("[start-start-button]").click();
+    stepEl(1).querySelector("[start-next]").click(); // no radio -> stays, no event
+    stepEl(1).querySelector('input[type="radio"]').click();
+    vi.advanceTimersByTime(200);
+    stepEl(2).querySelector('input[type="radio"]').click();
+    vi.advanceTimersByTime(200);
+    fillContact();
+    document.querySelector("[start-ready-button]").click();
+    window.estGoTo("result");
+    window.estGoTo("result"); // same screen again -> no duplicate
+    expect(window.dataLayer).toEqual([
+      { event: "est_step", step: 1, steps: 4 },
+      { event: "est_step", step: 2, steps: 4 },
+      { event: "est_step", step: 3, steps: 4 },
+      { event: "est_step", step: 4, steps: 4 },
+      { event: "est_loading" },
+      { event: "est_result" },
+    ]);
+  });
+
   it("blocks step0 -> step1 when inputs empty", () => {
     funnelFixture();
     initStepper();
