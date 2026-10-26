@@ -8,6 +8,7 @@ import {
   decideMode,
   pickGeoFill,
   initHeaderAddress,
+  initNavScrollClose,
   unionRect,
   NO_HERO_OFFSET,
   STORAGE_KEY,
@@ -900,5 +901,94 @@ describe("initHeaderAddress", () => {
       await vi.advanceTimersByTimeAsync(0);
       expect(JSON.stringify(win.dataLayer)).not.toMatch(/SW1V|Rose/);
     });
+  });
+});
+
+describe("initNavScrollClose", () => {
+  let win, closed, listeners;
+  const flush = () => new Promise((r) => setTimeout(r, 0));
+
+  function setup({ desktop = true, jq = true } = {}) {
+    document.body.innerHTML = `
+      <div class="hdr__nav">
+        <div class="hdr__dd w-dropdown" id="dd1"><div class="hdr__toggle w-dropdown-toggle" id="t1"></div><nav class="hdr__list w-dropdown-list"></nav></div>
+        <div class="hdr__dd w-dropdown" id="dd2"><div class="hdr__toggle w-dropdown-toggle" id="t2"></div><nav class="hdr__list w-dropdown-list"></nav></div>
+      </div>`;
+    closed = [];
+    listeners = {};
+    win = {
+      scrollY: 100,
+      matchMedia: (q) => ({ matches: q === "(min-width: 768px)" && desktop }),
+      MutationObserver: window.MutationObserver,
+      jQuery: jq
+        ? (el) => ({
+            triggerHandler: (ev) => {
+              closed.push([el.id, ev]);
+              el.querySelector(".w-dropdown-toggle").classList.remove("w--open");
+            },
+          })
+        : undefined,
+      addEventListener: (t, fn, o) => ((listeners[t] = listeners[t] || new Map()).set(fn, o)),
+      removeEventListener: (t, fn) => listeners[t] && listeners[t].delete(fn),
+    };
+    return initNavScrollClose(win, document);
+  }
+  const scrollTo = (y) => {
+    win.scrollY = y;
+    [...(listeners.scroll?.keys() || [])].forEach((fn) => fn(new Event("scroll")));
+  };
+  const open = async (id) => {
+    document.getElementById(id).classList.add("w--open");
+    await flush();
+  };
+  const scrollListeners = () => listeners.scroll?.size || 0;
+
+  it("closes an open panel after 8px of scroll from where it opened", async () => {
+    setup();
+    expect(scrollListeners()).toBe(0); // nothing open → no listener
+    await open("t1");
+    expect(scrollListeners()).toBe(1);
+    expect([...listeners.scroll.values()][0]).toEqual({ passive: true });
+    scrollTo(107);
+    expect(closed).toEqual([]);
+    scrollTo(108);
+    expect(closed).toEqual([["dd1", "w-close.w-dropdown"]]);
+    await flush();
+    expect(scrollListeners()).toBe(0);
+  });
+
+  it("closes on scroll up too, measured from the open position", async () => {
+    setup();
+    win.scrollY = 300;
+    await open("t2");
+    scrollTo(293);
+    expect(closed).toEqual([]);
+    scrollTo(292);
+    expect(closed).toEqual([["dd2", "w-close.w-dropdown"]]);
+  });
+
+  it("another panel opening resets the start point", async () => {
+    setup();
+    await open("t1");
+    scrollTo(105);
+    document.getElementById("t1").classList.remove("w--open");
+    await open("t2");
+    scrollTo(110);
+    expect(closed).toEqual([]);
+    scrollTo(113);
+    expect(closed).toEqual([["dd2", "w-close.w-dropdown"]]);
+  });
+
+  it("never closes below 768px (burger drawer accordions)", async () => {
+    setup({ desktop: false });
+    await open("t1");
+    scrollTo(400);
+    expect(closed).toEqual([]);
+  });
+
+  it("is a no-op without jQuery", async () => {
+    expect(setup({ jq: false })).toBe(null);
+    await open("t1");
+    expect(scrollListeners()).toBe(0);
   });
 });
