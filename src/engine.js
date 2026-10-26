@@ -3,7 +3,9 @@
    [start-start-button] is the address step (validated); the step with [start-ready-button]
    is the contact step (validated -> loading). Every other step is a radio step (auto-advance
    on radio change / explicit Next / Back). Adding/removing a screen is an HTML-only change.
-   valuation.js drives the final transitions via window.estGoTo. No GSAP dependency. */
+   valuation.js drives the final transitions via window.estGoTo. No GSAP dependency.
+   dataLayer (no personal data; GTM wiring is Chris's): est_step {step, steps} on every shown
+   step (1-based), est_loading on a valid contact submit, est_result / est_noresults. */
 
 export function isFilled(el) {
   return !!el && String(el.value ?? "").trim().length > 0;
@@ -126,6 +128,13 @@ export function initStepper(doc = document) {
   const photos = Array.from(doc.querySelectorAll("[start-photo]"));
   const progressFill = $("[start-progress-fill]");
   const counter = $("[start-step-counter]");
+  const dataLayer = typeof window !== "undefined" ? (window.dataLayer = window.dataLayer || []) : [];
+  let shown = null;
+  const track = (key, data) => {
+    if (key === shown) return;
+    shown = key;
+    dataLayer.push(data);
+  };
 
   function setStep(n) {
     if (n < 0 || n >= count) return;
@@ -135,6 +144,7 @@ export function initStepper(doc = document) {
     photos.forEach((p) => setActive(p, Number(p.getAttribute("data-step")) === n));
     if (progressFill) progressFill.style.width = progressWidth(n, count);
     if (counter) counter.textContent = `${n + 1} of ${count} steps`;
+    track(n, { event: "est_step", step: n + 1, steps: count });
   }
 
   function showFinal(key) {
@@ -142,6 +152,7 @@ export function initStepper(doc = document) {
     if (!el) return;
     setActive(frame, false);
     Object.values(finals).forEach((f) => setActive(f, f === el));
+    track(key, { event: `est_${key}` });
     if (key === "loading") runChecklist(el);
   }
 
