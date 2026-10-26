@@ -28,12 +28,20 @@
    — the same shape as the hero form (no beds: /start-hosting asks on step 0), plus
    ad params. sessionStorage "staymo_address" keeps it for the prefill and the ×.
    No-op on pages without the root, and when the root is not rendered
-   (display:none from a Designer variant, e.g. /dubai): no mode, no listeners, no prefill. */
+   (display:none from a Designer variant, e.g. /dubai): no mode, no listeners, no prefill.
+   Nav panels (initNavScrollClose, site-wide, independent of the address root): at
+   ≥768px an open .hdr__nav > .hdr__dd (Webflow dropdown: its .w-dropdown-toggle gets
+   .w--open) closes once the page scrolls NAV_CLOSE_SCROLL px from where it opened, via
+   jQuery(dd).triggerHandler("w-close.w-dropdown"). Webflow-owned markup, so classes,
+   not data-*. Never ≤767 (the burger drawer's accordions); no jQuery → no-op; the scroll
+   listener exists only while a panel is open. */
 
 export const STORAGE_KEY = "staymo_address";
 export const STORAGE_TTL_MS = 30 * 60 * 1000;
 export const SCROLL_HYSTERESIS = 8;
 export const NO_HERO_OFFSET = 24;
+export const NAV_CLOSE_SCROLL = 8;
+export const NAV_DESKTOP_QUERY = "(min-width: 768px)";
 export const PRECISE_ACCURACY_M = 100;
 export const GEO_OPTIONS = { enableHighAccuracy: true, timeout: 10000, maximumAge: 60000 };
 export const MSG_OUTSIDE_UK = "Looks like you're outside the UK — type the property address";
@@ -643,6 +651,51 @@ export function initHeaderAddress(win = window, doc = document) {
   return { update, submit, useLocation, getMode: () => mode };
 }
 
+// --- Nav panels: close on scroll (desktop) ---
+export function initNavScrollClose(win = window, doc = document) {
+  const jq = win.jQuery;
+  if (typeof jq !== "function" || typeof win.MutationObserver !== "function") return null;
+  const toggles = [...doc.querySelectorAll(".hdr__nav > .hdr__dd > .w-dropdown-toggle")];
+  if (!toggles.length) return null;
+  const mq = typeof win.matchMedia === "function" ? win.matchMedia(NAV_DESKTOP_QUERY) : null;
+  const isDesktop = () => Boolean(mq && mq.matches);
+  let open = null; // { dd, y } while a panel is open
+  let listening = false;
+
+  const onScroll = () => {
+    if (!open || !isDesktop()) return;
+    if (Math.abs(win.scrollY - open.y) < NAV_CLOSE_SCROLL) return;
+    const { dd } = open;
+    open = null;
+    jq(dd).triggerHandler("w-close.w-dropdown");
+  };
+  const listen = (on) => {
+    if (on === listening) return;
+    listening = on;
+    if (on) win.addEventListener("scroll", onScroll, { passive: true });
+    else win.removeEventListener("scroll", onScroll, { passive: true });
+  };
+
+  const sync = () => {
+    const toggle = toggles.find((t) => t.classList.contains("w--open"));
+    if (!toggle) {
+      open = null;
+      return listen(false);
+    }
+    const dd = toggle.parentElement;
+    if (!open || open.dd !== dd) open = { dd, y: win.scrollY };
+    listen(true);
+  };
+
+  const observer = new win.MutationObserver(sync);
+  toggles.forEach((t) => observer.observe(t, { attributes: true, attributeFilter: ["class"] }));
+  sync();
+  return { sync, disconnect: () => (observer.disconnect(), listen(false)) };
+}
+
 if (typeof window !== "undefined") {
-  window.addEventListener("DOMContentLoaded", () => initHeaderAddress());
+  window.addEventListener("DOMContentLoaded", () => {
+    initNavScrollClose();
+    initHeaderAddress();
+  });
 }
