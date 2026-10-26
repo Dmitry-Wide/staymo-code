@@ -906,7 +906,11 @@ describe("initHeaderAddress", () => {
 
 describe("initNavScrollClose", () => {
   let win, closed, listeners;
-  const flush = () => new Promise((r) => setTimeout(r, 0));
+  const flush = () => vi.advanceTimersByTimeAsync(0);
+  // Past the settle window: no glide is running when the user starts scrolling.
+  const idle = () => vi.advanceTimersByTime(200);
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => vi.useRealTimers());
 
   function setup({ desktop = true, jq = true } = {}) {
     document.body.innerHTML = `
@@ -949,6 +953,7 @@ describe("initNavScrollClose", () => {
     await open("t1");
     expect(scrollListeners()).toBe(1);
     expect([...listeners.scroll.values()][0]).toEqual({ passive: true });
+    idle();
     scrollTo(107);
     expect(closed).toEqual([]);
     scrollTo(108);
@@ -961,6 +966,7 @@ describe("initNavScrollClose", () => {
     setup();
     win.scrollY = 300;
     await open("t2");
+    idle();
     scrollTo(293);
     expect(closed).toEqual([]);
     scrollTo(292);
@@ -970,13 +976,42 @@ describe("initNavScrollClose", () => {
   it("another panel opening resets the start point", async () => {
     setup();
     await open("t1");
+    idle();
     scrollTo(105);
     document.getElementById("t1").classList.remove("w--open");
     await open("t2");
+    idle();
     scrollTo(110);
     expect(closed).toEqual([]);
     scrollTo(113);
     expect(closed).toEqual([["dd2", "w-close.w-dropdown"]]);
+  });
+
+  it("a smooth-scroll glide running at the open does not close it; a new scroll after it does", async () => {
+    setup();
+    await open("t1");
+    // Lenis keeps easing after the wheel stops: frames ~16 ms apart, 40px in total.
+    for (const y of [110, 118, 125, 131, 136, 140]) {
+      vi.advanceTimersByTime(16);
+      scrollTo(y);
+    }
+    expect(closed).toEqual([]);
+    vi.advanceTimersByTime(150); // the glide has ended
+    scrollTo(147);
+    expect(closed).toEqual([]);
+    scrollTo(148);
+    expect(closed).toEqual([["dd1", "w-close.w-dropdown"]]);
+  });
+
+  it("a scroll that never pauses still closes after the settle cap", async () => {
+    setup();
+    await open("t1");
+    let y = 100;
+    for (let t = 0; t < 1100 && !closed.length; t += 50) {
+      vi.advanceTimersByTime(50);
+      scrollTo((y += 5));
+    }
+    expect(closed).toEqual([["dd1", "w-close.w-dropdown"]]);
   });
 
   it("never closes below 768px (burger drawer accordions)", async () => {
