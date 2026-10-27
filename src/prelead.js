@@ -2,6 +2,11 @@
    Consolidates three inline embeds, ported 1:1:
    - Form Initializer: URL params (address / postal-code / beds) prefill the
      start-host form and auto-click Start.
+   - Estimate link (?beds=N&goal=X, no address/postcode): marks the bedroom tile
+     and checks the step-1 goal radio (maximise / guaranteed / balance) without
+     auto-clicking; the visitor still types the address on step 0. The goal
+     radios carry no data-* (Webflow form fields), so they bind to their field
+     name input[name="smarthost_goals"].
    - Address handoff (header-address.js): ?postal-code without beds, or no params
      but a fresh sessionStorage "staymo_address", prefills the address step
      without auto-clicking.
@@ -90,6 +95,19 @@ export function applyBedsToTiles(doc, beds) {
     input.dispatchEvent(new Event("input", { bubbles: true }));
     input.dispatchEvent(new Event("change", { bubbles: true }));
   }
+  return true;
+}
+
+// Check the step-1 goal radio named by ?goal. checked is set without a change
+// event: engine.js auto-advances a radio step on change.
+export const GOALS = ["maximise", "guaranteed", "balance"];
+
+export function applyGoal(root, goal) {
+  const value = String(goal || "").trim().toLowerCase();
+  if (!GOALS.includes(value)) return false;
+  const radio = root.querySelector(`input[type="radio"][name="smarthost_goals"][value="${value}"]`);
+  if (!radio) return false;
+  radio.checked = true;
   return true;
 }
 
@@ -188,6 +206,11 @@ export function prefillFromURL(doc = document, search = currentSearch(), storage
   const postalCode = getURLParam("postal-code", search);
   const beds = getURLParam("beds", search);
   if (!(address && postalCode && beds)) {
+    if (!address && !postalCode && beds) {
+      applyBedsToTiles(form, beds);
+      applyGoal(doc, getURLParam("goal", search));
+      return true;
+    }
     const stored = readStoredAddress(storage, now);
     if (postalCode && !beds) {
       const match = stored && samePostcode(stored.postal, postalCode) ? stored : null;
