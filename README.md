@@ -3,6 +3,7 @@
 Versioned front-end modules (JS/CSS) for the Staymo Webflow project, served via jsDelivr.
 
 - `src/` — modules (vanilla ES, no build). `tests/` — Vitest + happy-dom.
+- Exception: `src/beds-early.js` is not loaded from jsDelivr; the page pastes its code as an inline `<script>` (it must run before first paint, which no module can). Paste it again when it changes.
 - JS binds to `data-*` attributes only, never to classes. Exception: markup a Webflow component owns and cannot carry `data-*` (`megamenu.js`, `button-names.js`); say so in the module header.
 - Release: Actions → **Release** → Run workflow with `version: vX.Y.Z` (tests, tags main, prints SRI in the run summary; agents trigger it via the API since they cannot push tags). Manual fallback: `git tag vX.Y.Z && git push --tags`. CDN: `https://cdn.jsdelivr.net/gh/Dmitry-Wide/staymo-code@vX.Y.Z/src/<file>`.
 
