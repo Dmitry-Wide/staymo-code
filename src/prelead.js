@@ -4,7 +4,9 @@
      start-host form and auto-click Start.
    - Estimate link (?beds=N&goal=X, no address/postcode): marks the bedroom tile
      and checks the step-1 goal radio (maximise / guaranteed / balance) without
-     auto-clicking; the visitor still types the address on step 0. The goal
+     auto-clicking; the visitor still types the address on step 0. This module
+     runs after the page is parsed, i.e. after first paint, so the page's inline
+     beds-early.js marks the tile before it; this then writes the input. The goal
      radios carry no data-* (Webflow form fields), so they bind to their field
      name input[name="smarthost_goals"].
    - Address handoff (header-address.js): ?postal-code without beds, or no params

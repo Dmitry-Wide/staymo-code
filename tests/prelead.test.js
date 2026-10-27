@@ -1,9 +1,11 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { readFileSync } from "node:fs";
 import {
   getURLParam,
   getCookie,
   buildCookie,
   prefillFromURL,
+  applyBedsToTiles,
   applyGoal,
   injectReferrerFields,
   injectReferral,
@@ -817,5 +819,38 @@ describe("legacy staymo_tracking_* cleanup", () => {
     } finally {
       if (desc) Object.defineProperty(window, "localStorage", desc);
     }
+  });
+});
+
+describe("beds-early.js (inline snippet) marks the tile applyBedsToTiles would", () => {
+  const code = readFileSync("src/beds-early.js", "utf8");
+  function marked(apply) {
+    document.body.innerHTML = `
+      <div data-rooms>
+        <div data-room="0">Studio</div>
+        <div data-room="1">Studio</div>
+        <div data-room="1">1</div>
+        <div data-room="2" class="is-bed-selected">2</div>
+        <div data-room="3">3</div>
+        <div data-room="4">4 +</div>
+        <input type="hidden" data-rooms-input value="2">
+      </div>`;
+    apply();
+    return [...document.querySelectorAll("[data-room]")].map((t) => t.classList.contains("is-bed-selected"));
+  }
+  afterEach(() => history.replaceState(null, "", "/"));
+
+  it.each(["3", "0", "1", "4", "7", "-2", "2.5", " 3 ", " ", "", "x", null])("beds=%j", (beds) => {
+    history.replaceState(null, "", beds === null ? "/start-hosting" : `/start-hosting?beds=${encodeURIComponent(beds)}`);
+    const early = marked(() => new Function(code)());
+    // The input stays prelead.js's job.
+    expect(document.querySelector("[data-rooms-input]").value).toBe("2");
+    expect(early).toEqual(marked(() => beds && applyBedsToTiles(document, beds)));
+  });
+
+  it("does nothing without tiles", () => {
+    history.replaceState(null, "", "/start-hosting?beds=3");
+    document.body.innerHTML = "";
+    expect(() => new Function(code)()).not.toThrow();
   });
 });
