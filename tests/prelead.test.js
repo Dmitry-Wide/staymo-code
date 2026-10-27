@@ -4,6 +4,7 @@ import {
   getCookie,
   buildCookie,
   prefillFromURL,
+  applyGoal,
   injectReferrerFields,
   injectReferral,
   initReferrerAttribution,
@@ -247,6 +248,107 @@ describe("prefillFromURL on the tile-based funnel", () => {
     expect(changed).toBe(true);
     vi.runAllTimers();
     vi.useRealTimers();
+  });
+});
+
+describe("prefillFromURL: estimate link (?beds&goal, no address)", () => {
+  // Mirrors staging /start-hosting: the start-host element is step 0 only; the
+  // goal radios live in the next [start-step], outside it.
+  function fixture() {
+    document.body.innerHTML = `
+      <div start-frame>
+        <div start-step data-form-type="start-host">
+          <input data-input-id="address-search">
+          <input data-input-id="postal-code-result">
+          <div data-rooms>
+            <div data-room="0">Studio</div>
+            <div data-room="1">1</div>
+            <div data-room="2" class="is-bed-selected">2</div>
+            <div data-room="3">3</div>
+            <div data-room="4">4 +</div>
+            <input type="hidden" data-rooms-input value="2">
+          </div>
+          <button start-start-button></button>
+        </div>
+        <div start-step>
+          <label><input type="radio" name="smarthost_goals" value="maximise">Maximise income</label>
+          <label><input type="radio" name="smarthost_goals" value="guaranteed">Guaranteed income</label>
+          <label><input type="radio" name="smarthost_goals" value="balance">Balance income and flexibility</label>
+          <label><input type="radio" name="smarthost_goals" value="not_sure">Not sure yet</label>
+        </div>
+      </div>`;
+  }
+  const $ = (s) => document.querySelector(s);
+  const checkedGoal = () => $('input[name="smarthost_goals"]:checked')?.value ?? null;
+  const store = { getItem: () => JSON.stringify({ address: "Stored St", postal: "E14 1AA", beds: "1", ts: 1000 }) };
+  let clicked;
+  beforeEach(() => {
+    vi.useFakeTimers();
+    fixture();
+    clicked = vi.fn();
+    $("[start-start-button]").addEventListener("click", clicked);
+  });
+  afterEach(() => {
+    vi.runAllTimers();
+    expect(clicked).not.toHaveBeenCalled();
+    vi.useRealTimers();
+  });
+
+  it.each([
+    ["maximise", "maximise"],
+    ["guaranteed", "guaranteed"],
+    ["balance", "balance"],
+  ])("beds=3&goal=%s marks the tile and checks the goal", (goal, value) => {
+    expect(prefillFromURL(document, `?beds=3&goal=${goal}`, store, 2000)).toBe(true);
+    expect($('[data-room="3"]').classList.contains("is-bed-selected")).toBe(true);
+    expect($('[data-room="2"]').classList.contains("is-bed-selected")).toBe(false);
+    expect($("[data-rooms-input]").value).toBe("3");
+    expect(checkedGoal()).toBe(value);
+  });
+
+  it("leaves step 0's address empty, even with a stored address", () => {
+    prefillFromURL(document, "?beds=3&goal=maximise", store, 2000);
+    expect($('[data-input-id="address-search"]').value).toBe("");
+    expect($('[data-input-id="postal-code-result"]').value).toBe("");
+  });
+
+  it("checks the goal without a change event (engine.js would auto-advance)", () => {
+    const changed = vi.fn();
+    document.addEventListener("change", (e) => e.target.type === "radio" && changed());
+    prefillFromURL(document, "?beds=2&goal=guaranteed", null, 2000);
+    expect(checkedGoal()).toBe("guaranteed");
+    expect(changed).not.toHaveBeenCalled();
+  });
+
+  it("beds without goal marks the tile only", () => {
+    expect(prefillFromURL(document, "?beds=1", null, 2000)).toBe(true);
+    expect($('[data-room="1"]').classList.contains("is-bed-selected")).toBe(true);
+    expect(checkedGoal()).toBe(null);
+  });
+
+  it("ignores an unknown or not_sure goal", () => {
+    prefillFromURL(document, "?beds=1&goal=not_sure", null, 2000);
+    expect(checkedGoal()).toBe(null);
+    prefillFromURL(document, '?beds=1&goal=x"]', null, 2000);
+    expect(checkedGoal()).toBe(null);
+  });
+
+  it("goal is case-insensitive", () => {
+    prefillFromURL(document, "?beds=1&goal=Balance", null, 2000);
+    expect(checkedGoal()).toBe("balance");
+  });
+
+  it("goal without beds keeps the stored-address path as before", () => {
+    expect(prefillFromURL(document, "?goal=maximise", store, 2000)).toBe(true);
+    expect($('[data-input-id="address-search"]').value).toBe("Stored St");
+    expect(checkedGoal()).toBe(null);
+  });
+});
+
+describe("applyGoal", () => {
+  it("returns false when the radios are missing", () => {
+    document.body.innerHTML = "<div></div>";
+    expect(applyGoal(document, "maximise")).toBe(false);
   });
 });
 
