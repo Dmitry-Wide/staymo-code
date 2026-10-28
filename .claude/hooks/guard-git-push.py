@@ -33,7 +33,8 @@ The copy exception (decision 13, amended 2026-10-08, Dmitry: «копии — м
 the kit, a PR that touches a lock passes when every lock file at its pinned head equals its source on
 kit@main byte for byte (git blob ids: a hook at the same path; studio-kit.yml as templates/studio-kit.yml
 renders it, with either set's flags) and every other file is a copy too (.claude/rules/studio.md, a
-file of a .claude/skills/ dir that kit@main has). `gh pr merge` pins with `--match-head-commit <sha>`,
+file of a .claude/skills/ dir that kit@main has, a seed equal to its template on kit@main:
+.claude/network-allowlist.txt as templates/network-allowlist.txt). `gh pr merge` pins with `--match-head-commit <sha>`,
 `gh api .../merge` with `-f sha=<sha>`. A lock edit in the kit itself, a lock with no source on kit@main
 (.claude/settings.json, any other workflow), a lock gone at the head, a truncated tree or a failed
 read of kit@main (through `gh api`) stay Dmitry's.
@@ -78,6 +79,7 @@ KIT = "dmitry-wide/studio-kit"  # lower case: GitHub names are case-insensitive
 WORKFLOW = ".github/workflows/studio-kit.yml"  # the kit's tools/studio-copy.py writes it from TEMPLATE
 TEMPLATE = "templates/studio-kit.yml"  # its flags as {flags}: "" (the core set) or "--skills"
 COPIES = re.compile(r"^\.claude/(rules/studio\.md|skills/[^/]+/.+)$")  # the other files a copy writes
+SEEDS = {".claude/network-allowlist.txt": "templates/network-allowlist.txt"}  # written once, a byte copy of its template
 ASK = re.compile(r"Сливаем\s+([\w.-]+)/([\w.-]+)#(\d+)\s*@\s*([0-9a-f]{7,40})\?", re.I)
 YES = re.compile(r"(?:(?:да|ок|ok|окей|сливаем|сливай|давай)[^\w?]*)+", re.I)  # a bare yes: no «да?», nothing else
 CONSENT = set()  # {(owner/repo, number, sha prefix)}: Dmitry's «да» in this chat; decide() fills it
@@ -390,6 +392,12 @@ def copy_equal(files, have):
     if why:
         return why
     for f in files:
+        if f in SEEDS:
+            if f not in have:
+                return f"{f} is gone at the head"
+            if have[f] != kit.get(SEEDS[f]):
+                return f"{f} differs from {SEEDS[f]} on kit@main"
+            continue
         if not LOCKS.search(f):
             if not (COPIES.match(f) and f in kit):
                 return f"{f} is not a kit copy"
@@ -761,15 +769,19 @@ def selftest():
     real_gh_api, hook_path, skill = gh_api, ".claude/hooks/guard-git-push.py", ".claude/skills/nodes/SKILL.md"
     hook, tpl = b"#!/usr/bin/env python3\n# guard\n", b'flags: "{flags}"\n'
     sha = lambda n: f"{int(n):040x}"
-    kit = {hook_path: blob_id(hook), skill: "1" * 40, TEMPLATE: blob_id(tpl), ".claude/settings.json": "2" * 40}
+    seed = ".claude/network-allowlist.txt"
+    kit = {hook_path: blob_id(hook), skill: "1" * 40, TEMPLATE: blob_id(tpl), ".claude/settings.json": "2" * 40,
+           SEEDS[seed]: "6" * 40}
     equal = {hook_path: blob_id(hook), WORKFLOW: blob_id(b'flags: "--skills"\n'), skill: "3" * 40, "docs/a.md": "4" * 40}
     heads = {"20": equal, "21": dict(equal, **{hook_path: blob_id(hook.replace(b"guard", b"guarD"))}),
              "22": dict(equal, **{".claude/settings.json": "5" * 40}), "23": equal,
              "24": dict(equal, **{WORKFLOW: blob_id(b'flags: "--skills"\n# edited\n')}),
-             "25": {k: v for k, v in equal.items() if k != hook_path}, "26": equal}
+             "25": {k: v for k, v in equal.items() if k != hook_path}, "26": equal,
+             "27": dict(equal, **{seed: "6" * 40}), "28": dict(equal, **{seed: "7" * 40}), "29": equal}
     fake.update({"20": [hook_path, WORKFLOW, skill], "21": [hook_path], "22": [".claude/settings.json"],
                  "23": [hook_path, "docs/a.md"], "24": [WORKFLOW], "25": [hook_path],
-                 "26": [".github/workflows/other.yml"]})
+                 "26": [".github/workflows/other.yml"], "27": [hook_path, seed], "28": [hook_path, seed],
+                 "29": [hook_path, seed]})
     kit_state = {"tree": "false\n", "up": True}
 
     def fake_gh_api(path, jq=None, raw=False):
@@ -801,6 +813,9 @@ def selftest():
         ("gh pr merge 24 -R o/r" + pin(24), f"{WORKFLOW} differs from kit@main"),
         ("gh pr merge 25 -R o/r" + pin(25), f"{hook_path} is gone at the head"),
         ("gh pr merge 26 -R o/r" + pin(26), ".github/workflows/other.yml has no source on kit@main"),
+        ("gh pr merge 27 -R o/r" + pin(27), None),  # the seed equal to its template
+        ("gh pr merge 28 -R o/r" + pin(28), f"{seed} differs from {SEEDS[seed]} on kit@main"),
+        ("gh pr merge 29 -R o/r" + pin(29), f"{seed} is gone at the head"),
         ("gh pr merge 20 -R Dmitry-Wide/studio-kit" + pin(20), LOCKED.format("Dmitry-Wide/studio-kit#20", hook_path)),
         ("gh pr merge 19 -R Dmitry-Wide/studio-kit" + pin(20),
          LOCKED.format("Dmitry-Wide/studio-kit#19", "templates/studio-kit.yml")),
