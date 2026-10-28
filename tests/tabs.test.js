@@ -349,14 +349,15 @@ describe("initTabs: autoplay", () => {
 
 describe("initTabs: overflowing list", () => {
   // A 100px-wide list of 80px pills: tab i spans [80i, 80i+80] in scroll space.
-  function layout(r = root(), { width = 100, pill = 80 } = {}) {
+  function layout(r = root(), { width = 100, pill = 80, border = 0 } = {}) {
     const list = r.querySelector("[data-tabs-list]");
     Object.defineProperty(list, "clientWidth", { configurable: true, get: () => width });
     Object.defineProperty(list, "scrollWidth", { configurable: true, get: () => pill * tabs(r).length });
+    Object.defineProperty(list, "clientLeft", { configurable: true, get: () => border });
     list.scrollLeft = 0;
-    list.getBoundingClientRect = () => ({ left: 10, width, top: 0, height: 40 });
+    list.getBoundingClientRect = () => ({ left: 10, width: width + 2 * border, top: 0, height: 40 });
     tabs(r).forEach((t, i) => {
-      t.getBoundingClientRect = () => ({ left: 10 + i * pill - list.scrollLeft, width: pill, top: 0, height: 40 });
+      t.getBoundingClientRect = () => ({ left: 10 + border + i * pill - list.scrollLeft, width: pill, top: 0, height: 40 });
     });
     list.scrollTo = vi.fn(({ left }) => (list.scrollLeft = left));
     return list;
@@ -410,6 +411,34 @@ describe("initTabs: overflowing list", () => {
     list = layout(root(), { width: 400 });
     initTabs();
     key(tabs()[0], "End");
+    expect(list.scrollTo).not.toHaveBeenCalled();
+  });
+
+  it("accounts for a list border", () => {
+    document.body.innerHTML = markup();
+    const list = layout(root(), { border: 3 });
+    initTabs();
+    key(tabs()[0], "ArrowRight");
+    expect(list.scrollTo).toHaveBeenLastCalledWith({ left: 60, behavior: "smooth" });
+  });
+
+  it("aligns the start of a tab wider than the list, and keeps it there", () => {
+    document.body.innerHTML = markup();
+    const list = layout(root(), { width: 60 });
+    initTabs();
+    key(tabs()[0], "ArrowRight");
+    expect(list.scrollTo).toHaveBeenLastCalledWith({ left: 80, behavior: "smooth" });
+    list.scrollTo.mockClear();
+    tabs()[1].click();
+    expect(list.scrollTo).not.toHaveBeenCalled();
+  });
+
+  it("ignores sub-pixel overhang", () => {
+    document.body.innerHTML = markup();
+    const list = layout();
+    initTabs();
+    list.scrollLeft = 60.4; // tab 1 spans 80–160, view 60.4–160.4
+    tabs()[1].click();
     expect(list.scrollTo).not.toHaveBeenCalled();
   });
 });

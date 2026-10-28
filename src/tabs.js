@@ -106,15 +106,17 @@ function setup(root) {
   // A list that overflows sideways (pills on phones) scrolls itself so the
   // active tab is fully in view; scrollIntoView would scroll the page too.
   function reveal(tab) {
-    if (list.scrollWidth <= list.clientWidth) return;
+    if (list.scrollWidth <= list.clientWidth + 1) return;
     const lr = list.getBoundingClientRect();
     const tr = tab.getBoundingClientRect();
     const left = list.scrollLeft + tr.left - lr.left - list.clientLeft;
     const right = left + tr.width;
+    // 1px slack: rects are fractional, client sizes rounded. A tab wider than
+    // the list aligns its start (Math.min), where the label begins.
     let to;
-    if (left < list.scrollLeft) to = left;
-    else if (right > list.scrollLeft + list.clientWidth) to = right - list.clientWidth;
-    else return;
+    if (left < list.scrollLeft - 1) to = left;
+    else if (right > list.scrollLeft + list.clientWidth + 1) to = Math.min(left, right - list.clientWidth);
+    if (to === undefined || Math.abs(to - list.scrollLeft) <= 1) return;
     list.scrollTo({ left: to, behavior: reduce && reduce.matches ? "auto" : "smooth" });
   }
 
