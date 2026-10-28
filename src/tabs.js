@@ -36,7 +36,9 @@
    too when the list is vertical (aria-orientation="vertical", else a column
    flex-direction). Arrows wrap and activate. A click or a key that activates a
    tab turns autoplay off for good. prefers-reduced-motion: reduce → no
-   autoplay (followed live).
+   autoplay (followed live). When the list overflows sideways (e.g. a row of
+   pills on phones), each change of the active tab scrolls the list, never the
+   page, so that tab is fully visible (instantly under reduced motion).
 
    The bar restarts each cycle because .is-active moves to another tab; pausing
    freezes it, and the module keeps the remaining time so both resume in step.
@@ -99,6 +101,23 @@ function setup(root) {
   let active = tabs.findIndex((t) => t.getAttribute("aria-selected") === "true" || t.classList.contains("is-active"));
   if (active < 0) active = 0;
 
+  const reduce = typeof matchMedia === "function" ? matchMedia("(prefers-reduced-motion: reduce)") : null;
+
+  // A list that overflows sideways (pills on phones) scrolls itself so the
+  // active tab is fully in view; scrollIntoView would scroll the page too.
+  function reveal(tab) {
+    if (list.scrollWidth <= list.clientWidth) return;
+    const lr = list.getBoundingClientRect();
+    const tr = tab.getBoundingClientRect();
+    const left = list.scrollLeft + tr.left - lr.left - list.clientLeft;
+    const right = left + tr.width;
+    let to;
+    if (left < list.scrollLeft) to = left;
+    else if (right > list.scrollLeft + list.clientWidth) to = right - list.clientWidth;
+    else return;
+    list.scrollTo({ left: to, behavior: reduce && reduce.matches ? "auto" : "smooth" });
+  }
+
   function select(i) {
     active = i;
     tabs.forEach((tab, j) => {
@@ -109,13 +128,13 @@ function setup(root) {
       panels[j].classList.toggle("is-active", on);
       panels[j].toggleAttribute("inert", !on);
     });
+    reveal(tabs[i]);
   }
   select(active);
 
   // Autoplay. It runs only while every condition holds; `remaining` carries
   // the unspent part of the current cycle across pauses.
   const interval = Number(root.getAttribute("data-tabs-interval"));
-  const reduce = typeof matchMedia === "function" ? matchMedia("(prefers-reduced-motion: reduce)") : null;
   let enabled = n > 1 && interval > 0;
   let inView = typeof IntersectionObserver !== "function";
   let hover = false;
@@ -197,7 +216,7 @@ function setup(root) {
     e.preventDefault();
     stop();
     select(to);
-    tabs[to].focus();
+    tabs[to].focus({ preventScroll: true });
   });
 
   root.setAttribute("data-tabs-ready", "");
