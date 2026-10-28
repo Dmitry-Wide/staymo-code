@@ -346,3 +346,99 @@ describe("initTabs: autoplay", () => {
     expect(active(b)).toBe(2);
   });
 });
+
+describe("initTabs: overflowing list", () => {
+  // A 100px-wide list of 80px pills: tab i spans [80i, 80i+80] in scroll space.
+  function layout(r = root(), { width = 100, pill = 80, border = 0 } = {}) {
+    const list = r.querySelector("[data-tabs-list]");
+    Object.defineProperty(list, "clientWidth", { configurable: true, get: () => width });
+    Object.defineProperty(list, "scrollWidth", { configurable: true, get: () => pill * tabs(r).length });
+    Object.defineProperty(list, "clientLeft", { configurable: true, get: () => border });
+    list.scrollLeft = 0;
+    list.getBoundingClientRect = () => ({ left: 10, width: width + 2 * border, top: 0, height: 40 });
+    tabs(r).forEach((t, i) => {
+      t.getBoundingClientRect = () => ({ left: 10 + border + i * pill - list.scrollLeft, width: pill, top: 0, height: 40 });
+    });
+    list.scrollTo = vi.fn(({ left }) => (list.scrollLeft = left));
+    return list;
+  }
+
+  it("autoplay scrolls the list so the active tab is fully visible, smoothly", () => {
+    document.body.innerHTML = markup();
+    const list = layout();
+    initTabs();
+    expect(list.scrollTo).not.toHaveBeenCalled(); // first tab already in view
+    show(root());
+    vi.advanceTimersByTime(7000);
+    expect(list.scrollTo).toHaveBeenLastCalledWith({ left: 60, behavior: "smooth" }); // right edge 160 - 100
+    vi.advanceTimersByTime(7000);
+    expect(list.scrollTo).toHaveBeenLastCalledWith({ left: 140, behavior: "smooth" });
+    vi.advanceTimersByTime(14000); // wraps to the first tab: scroll back to its left edge
+    expect(active()).toBe(0);
+    expect(list.scrollTo).toHaveBeenLastCalledWith({ left: 0, behavior: "smooth" });
+  });
+
+  it("keys scroll the list, not the page", () => {
+    document.body.innerHTML = markup();
+    const list = layout();
+    initTabs();
+    const focus = vi.spyOn(tabs()[3], "focus");
+    key(tabs()[0], "End");
+    expect(focus).toHaveBeenCalledWith({ preventScroll: true });
+    expect(list.scrollTo).toHaveBeenLastCalledWith({ left: 220, behavior: "smooth" });
+  });
+
+  it("jumps instantly under reduced motion", () => {
+    mq.matches = true;
+    document.body.innerHTML = markup();
+    const list = layout();
+    initTabs();
+    key(tabs()[0], "ArrowRight");
+    expect(list.scrollTo).toHaveBeenLastCalledWith({ left: 60, behavior: "auto" });
+  });
+
+  it("reveals a pre-marked tab at start; leaves a visible tab or a fitting list alone", () => {
+    document.body.innerHTML = markup();
+    tabs()[2].classList.add("is-active");
+    let list = layout();
+    initTabs();
+    expect(list.scrollTo).toHaveBeenLastCalledWith({ left: 140, behavior: "smooth" });
+    list.scrollTo.mockClear();
+    tabs()[2].click(); // already fully visible
+    expect(list.scrollTo).not.toHaveBeenCalled();
+
+    document.body.innerHTML = markup();
+    list = layout(root(), { width: 400 });
+    initTabs();
+    key(tabs()[0], "End");
+    expect(list.scrollTo).not.toHaveBeenCalled();
+  });
+
+  it("accounts for a list border", () => {
+    document.body.innerHTML = markup();
+    const list = layout(root(), { border: 3 });
+    initTabs();
+    key(tabs()[0], "ArrowRight");
+    expect(list.scrollTo).toHaveBeenLastCalledWith({ left: 60, behavior: "smooth" });
+  });
+
+  it("aligns the start of a tab wider than the list, and keeps it there", () => {
+    document.body.innerHTML = markup();
+    const list = layout(root(), { width: 60 });
+    initTabs();
+    key(tabs()[0], "ArrowRight");
+    expect(list.scrollTo).toHaveBeenLastCalledWith({ left: 80, behavior: "smooth" });
+    list.scrollTo.mockClear();
+    tabs()[1].click();
+    expect(list.scrollTo).not.toHaveBeenCalled();
+  });
+
+  it("ignores sub-pixel overhang", () => {
+    document.body.innerHTML = markup();
+    const list = layout();
+    initTabs();
+    list.scrollLeft = 60.4; // tab 1 spans 80–160, view 60.4–160.4
+    tabs()[1].click();
+    expect(list.scrollTo).not.toHaveBeenCalled();
+  });
+});
