@@ -7,6 +7,9 @@ import {
   showAddrError,
   clearAddrError,
   ADDR_HINT,
+  ADDR_SERVICE_HINT,
+  whenMapsReady,
+  attachPlacesOnce,
 } from "../src/autocomplete.js";
 
 beforeEach(() => {
@@ -16,6 +19,7 @@ beforeEach(() => {
 describe("isRealAddress", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
+    vi.restoreAllMocks();
   });
   const mkAddr = (value, placeSelected) => {
     const a = document.createElement("input");
@@ -100,6 +104,91 @@ describe("isRealAddress", () => {
     const postal = mkPostal();
     expect(await isRealAddress(mkAddr("sw1v1lw"), postal)).toBe(true);
     expect(postal.value).toBe("SW1V 1LW");
+  });
+
+  it("mixed-case E14 9ws passes when Google returns a valid full postcode", async () => {
+    stubResult(place("E14 9WS", "London E14 9WS, UK"));
+    const addr = mkAddr("E14 9ws");
+    const postal = mkPostal();
+    expect(await isRealAddress(addr, postal)).toBe(true);
+    expect(addr.value).toBe("London E14 9WS");
+    expect(postal.value).toBe("E14 9WS");
+  });
+
+  it.each(["REQUEST_DENIED", "OVER_QUERY_LIMIT", "UNKNOWN_ERROR", undefined])(
+    "a Geocoder failure (%s) offers a retry, preserving the typed postcode",
+    async (code) => {
+      vi.spyOn(console, "error").mockImplementation(() => {});
+      const spy = stubGeocoder(async () => {
+        throw Object.assign(new Error("Lookup failed"), { code });
+      });
+      document.body.innerHTML = "<div><input></div>";
+      const addr = document.querySelector("input");
+      addr.value = "E14 9ws";
+      const postal = mkPostal();
+      expect(await isRealAddress(addr, postal)).toBe(false);
+      expect(postal.value).toBe("");
+      expect(addr.value).toBe("E14 9ws");
+      expect(addr.nextElementSibling.textContent).toBe(ADDR_SERVICE_HINT);
+
+      spy.mockResolvedValue({ results: [place("E14 9WS", "London E14 9WS, UK")] });
+      expect(await isRealAddress(addr, postal)).toBe(true);
+      expect(postal.value).toBe("E14 9WS");
+      expect(addr.nextElementSibling).toBe(null);
+    }
+  );
+
+  it("a failed nearest-postcode lookup shows a service hint, not an invalid-address hint", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    stubGeocoder(async (req) => {
+      if (req.location) throw Object.assign(new Error("Unavailable"), { code: "UNKNOWN_ERROR" });
+      return { results: [{
+        ...place("", "Canary Wharf, London, UK"),
+        types: ["neighborhood"], geometry: { location: { lat: 51.505, lng: -0.02 } },
+      }] };
+    });
+    document.body.innerHTML = "<div><input></div>";
+    const addr = document.querySelector("input");
+    addr.value = "Canary Wharf";
+    expect(await isRealAddress(addr, mkPostal())).toBe(false);
+    expect(addr.nextElementSibling.textContent).toBe(ADDR_SERVICE_HINT);
+  });
+
+  it("a dropdown pick's background lookup handles a service failure and can retry", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const geocode = stubGeocoder(async () => {
+      throw Object.assign(new Error("Unavailable"), { code: "REQUEST_DENIED" });
+    });
+    let onPick;
+    window.google.maps.places = { Autocomplete: class {
+      addListener(event, listener) { onPick = listener; }
+      getPlace() { return { geometry: { location: {} }, address_components: [] }; }
+    } };
+    document.body.innerHTML = `<form>
+      <input data-input-id="address-search" value="Baker Street, London">
+      <input data-input-id="postal-code-result">
+    </form>`;
+    const addr = document.querySelector('[data-input-id="address-search"]');
+    const postal = document.querySelector('[data-input-id="postal-code-result"]');
+    attachPlacesOnce(addr);
+    onPick();
+    await vi.waitFor(() => expect(addr.nextElementSibling.textContent).toBe(ADDR_SERVICE_HINT));
+    expect(postal.value).toBe("");
+    geocode.mockResolvedValue({ results: [place("NW1", "Baker Street, London NW1, UK")] });
+    expect(await isRealAddress(addr, postal)).toBe(true);
+    expect(postal.value).toBe("NW1");
+    expect(addr.nextElementSibling).toBe(postal);
+  });
+
+  it("a valid-looking postcode with ZERO_RESULTS stays invalid", async () => {
+    stubResult(null);
+    document.body.innerHTML = "<div><input></div>";
+    const addr = document.querySelector("input");
+    addr.value = "E14 9ws";
+    const postal = mkPostal();
+    expect(await isRealAddress(addr, postal)).toBe(false);
+    expect(postal.value).toBe("");
+    expect(addr.nextElementSibling.textContent).toBe(ADDR_HINT);
   });
 
   it("a partial match (Google only guessed) is rejected with the hint", async () => {
@@ -270,6 +359,12 @@ describe("findNearestPostalInput", () => {
 });
 
 describe("lazy Maps loading", () => {
+  let disabledLoadingAsSuccess;
+  beforeEach(() => {
+    // Keep external JS disabled; dispatch failures and the Maps callback ourselves.
+    disabledLoadingAsSuccess = window.happyDOM.settings.handleDisabledFileLoadingAsSuccess;
+    window.happyDOM.settings.handleDisabledFileLoadingAsSuccess = true;
+  });
   const inputWith = (value) => {
     const i = document.createElement("input");
     i.value = value;
@@ -279,7 +374,73 @@ describe("lazy Maps loading", () => {
     document.querySelectorAll('script[src*="maps.googleapis.com/maps/api/js"]').length;
 
   afterEach(() => {
+    document.body.innerHTML = "";
     delete window.google;
+    window.initAutocomplete();
+    vi.useRealTimers();
+    window.happyDOM.settings.handleDisabledFileLoadingAsSuccess = disabledLoadingAsSuccess;
+  });
+
+  it("a script error settles all waiters immediately and the next focus retries once", async () => {
+    document.body.innerHTML = '<input data-input-id="address-search">';
+    const addr = document.querySelector("input");
+    const first = whenMapsReady();
+    const second = whenMapsReady();
+    expect(mapsScripts()).toBe(1);
+    const failedScript = document.querySelector("script");
+    failedScript.dispatchEvent(new Event("error"));
+    expect(await first).toBe(false);
+    expect(await second).toBe(false);
+    expect(mapsScripts()).toBe(0);
+
+    addr.focus();
+    const retry = whenMapsReady();
+    expect(mapsScripts()).toBe(1);
+    expect(document.querySelector("script")).not.toBe(failedScript);
+    // An old script's late event must not cancel the current request.
+    failedScript.dispatchEvent(new Event("error"));
+    expect(mapsScripts()).toBe(1);
+    document.body.removeChild(addr);
+    window.google = { maps: { Geocoder: class {} } };
+    window.initAutocomplete();
+    expect(await retry).toBe(true);
+  });
+
+  it("an expired caller does not cancel a shared load for the next caller", async () => {
+    vi.useFakeTimers();
+    const impatient = whenMapsReady(20);
+    await vi.advanceTimersByTimeAsync(20);
+    expect(await impatient).toBe(false);
+    const patient = whenMapsReady();
+    expect(mapsScripts()).toBe(1);
+    window.google = { maps: { Geocoder: class {} } };
+    window.initAutocomplete();
+    expect(await patient).toBe(true);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("a script error shows the service hint and another validation retries successfully", async () => {
+    document.body.innerHTML = '<div><input value="E14 9ws"></div>';
+    const addr = document.querySelector("input");
+    const postal = inputWith("");
+    const pending = isRealAddress(addr, postal);
+    document.querySelector("script").dispatchEvent(new Event("error"));
+    expect(await pending).toBe(false);
+    expect(addr.nextElementSibling.textContent).toBe(ADDR_SERVICE_HINT);
+    expect(addr.value).toBe("E14 9ws");
+    expect(postal.value).toBe("");
+
+    const retry = isRealAddress(addr, postal);
+    expect(mapsScripts()).toBe(1);
+    window.google = { maps: { Geocoder: class {
+      async geocode() {
+        return { results: [{ address_components: [{ types: ["postal_code"], long_name: "E14 9WS" }] }] };
+      }
+    } } };
+    window.initAutocomplete();
+    expect(await retry).toBe(true);
+    expect(postal.value).toBe("E14 9WS");
+    expect(addr.nextElementSibling).toBe(null);
   });
 
   it("no Maps script after DOMContentLoaded, one after focusing the address field", () => {
@@ -328,16 +489,23 @@ describe("lazy Maps loading", () => {
     expect(geocode).toHaveBeenCalledTimes(1);
   });
 
-  it("a pick without a postcode is refused when Maps never loads (no postcode to estimate)", async () => {
+  it("a Maps timeout gives a service hint and permits a fresh load on retry", async () => {
     vi.useFakeTimers();
     try {
-      const addr = inputWith("Wilton Road, London");
+      document.body.innerHTML = '<div><input value="Wilton Road, London"></div>';
+      const addr = document.querySelector("input");
       addr.dataset.placeSelected = "1";
       const postal = inputWith("");
       const pending = isRealAddress(addr, postal);
       await vi.advanceTimersByTimeAsync(10000);
       expect(await pending).toBe(false);
       expect(postal.value).toBe("");
+      expect(addr.nextElementSibling.textContent).toBe(ADDR_SERVICE_HINT);
+      expect(mapsScripts()).toBe(0);
+      const retry = whenMapsReady();
+      expect(mapsScripts()).toBe(1);
+      document.querySelector("script").dispatchEvent(new Event("error"));
+      expect(await retry).toBe(false);
     } finally {
       vi.useRealTimers();
     }
