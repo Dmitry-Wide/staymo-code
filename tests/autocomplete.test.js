@@ -282,6 +282,26 @@ describe("isRealAddress", () => {
 });
 
 describe("showAddrError / clearAddrError", () => {
+  it.each([
+    [ADDR_HINT, "E14 9ws"],
+    [ADDR_HINT, ""],
+    [ADDR_SERVICE_HINT, "E14 9ws"],
+    [ADDR_SERVICE_HINT, ""],
+  ])("input dismisses '%s' after editing/clearing to '%s' before Maps loads", (hint, value) => {
+    expect(window.google).toBeUndefined();
+    document.body.innerHTML = '<div><input data-input-id="address-search" value="failed address"></div>';
+    const addr = document.querySelector("input");
+    showAddrError(addr, hint);
+    expect(addr.dataset.placesAttached).toBeUndefined();
+    expect(addr.classList.contains("is-error")).toBe(true);
+
+    // Native clear controls set the value and dispatch this same bubbling event.
+    addr.value = value;
+    addr.dispatchEvent(new Event("input", { bubbles: true }));
+    expect(addr.nextElementSibling).toBe(null);
+    expect(addr.classList.contains("is-error")).toBe(false);
+  });
+
   it("puts one hint right after the input, even if the input's class mentions 'input'", () => {
     document.body.innerHTML = '<div class="hero__input__col"><input class="hero__form__input"></div>';
     const addr = document.querySelector("input");

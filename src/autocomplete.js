@@ -293,6 +293,11 @@ function loadGoogleMaps(doc = document) {
 }
 
 if (typeof window !== "undefined") {
+  // Editing or clearing a failed field must dismiss its hint even before Maps
+  // loads and installs the Places-specific input listener.
+  document.addEventListener("input", (e) => {
+    if (e.target?.matches(ADDRESS_SELECTOR)) clearAddrError(e.target);
+  });
   // Attach on focus — covers inputs added later by the stepper/IX. The first
   // focus loads Maps; its callback (initAutocomplete) attaches every field.
   document.addEventListener("focusin", (e) => {
