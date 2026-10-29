@@ -24,38 +24,44 @@ export function extractPostal(components) {
   return comps.find((c) => c.types?.includes("postal_code"))?.long_name || "";
 }
 
-// Resolves true once the Maps library is ready — loading it if nobody focused
-// the address field yet (Maps is lazy) — or false after timeoutMs.
-const mapsWaiters = [];
+// Resolves true once Maps is ready, or false on load failure/timeout. Each
+// caller removes its waiter when it settles, including when its own timer wins.
+const mapsWaiters = new Set();
 export function whenMapsReady(timeoutMs = 10000) {
   if (window.google?.maps?.Geocoder) return Promise.resolve(true);
-  loadGoogleMaps();
   return new Promise((resolve) => {
-    const timer = setTimeout(() => resolve(false), timeoutMs);
-    mapsWaiters.push(() => {
+    const done = (ready) => {
       clearTimeout(timer);
-      resolve(true);
-    });
+      mapsWaiters.delete(done);
+      resolve(ready);
+    };
+    const timer = setTimeout(() => done(false), timeoutMs);
+    mapsWaiters.add(done);
+    loadGoogleMaps();
   });
 }
 
+class AddressServiceError extends Error {}
+
 // Geocode through the Maps JS API (works under a referrer-restricted key).
-// Resolves to the results array; [] on no match, error or Maps not loading.
+// No match is []; service failures stay distinct so the UI can offer a retry.
 export async function geocode(request) {
-  if (!(await whenMapsReady())) return [];
+  if (!(await whenMapsReady())) throw new AddressServiceError("Maps unavailable");
   try {
     const { results } = await new window.google.maps.Geocoder().geocode(request);
     return results || [];
   } catch (e) {
     // ZERO_RESULTS rejects too — only real failures are worth logging.
-    if (e?.code !== "ZERO_RESULTS") console.error("Geocode error:", e);
-    return [];
+    if (e?.code === "ZERO_RESULTS") return [];
+    console.error("Geocode error:", e);
+    throw new AddressServiceError("Geocoder unavailable");
   }
 }
 
 // --- "Choose an address from the list" hint, placed right after the input ---
 const HINT_CLASS = "staymo-addr-error";
 export const ADDR_HINT = "Choose an address from the list or enter a postcode";
+export const ADDR_SERVICE_HINT = "Address lookup is temporarily unavailable. Please try again.";
 
 function injectHintStyle(doc) {
   if (doc.getElementById("staymo-addr-err-style")) return;
@@ -193,7 +199,11 @@ export function attachPlacesOnce(addressInput) {
     const postal = extractPostal(place.address_components);
     if (postal) postalCodeInput.value = postal;
     // A pick without a postcode (e.g. a street): look it up for that pick.
-    else fillPostcodeFromPick(addressInput, postalCodeInput);
+    else fillPostcodeFromPick(addressInput, postalCodeInput).catch((e) => {
+      if (e instanceof AddressServiceError && addressInput.dataset.placeSelected === "1") {
+        showAddrError(addressInput, ADDR_SERVICE_HINT);
+      }
+    });
   });
   // Any manual edit invalidates a previous selection and its postcode.
   addressInput.addEventListener("input", () => {
@@ -220,47 +230,74 @@ export async function fillPostcodeFromPick(addressInput, postalInput) {
 // gate the address step.
 export async function isRealAddress(addressInput, postcodeInput) {
   if (!addressInput) return false;
-  const postal = postcodeInput || findNearestPostalInput(addressInput);
-  if (addressInput.dataset.placeSelected === "1") {
-    await fillPostcodeFromPick(addressInput, postal);
-    // A pick Google has no postcode for (e.g. a whole city) cannot be estimated.
-    if (postal && !String(postal.value || "").trim()) {
+  try {
+    const postal = postcodeInput || findNearestPostalInput(addressInput);
+    if (addressInput.dataset.placeSelected === "1") {
+      await fillPostcodeFromPick(addressInput, postal);
+      // A pick Google has no postcode for (e.g. a whole city) cannot be estimated.
+      if (postal && !String(postal.value || "").trim()) {
+        showAddrError(addressInput);
+        return false;
+      }
+      clearAddrError(addressInput);
+      return true;
+    }
+    if (postal && String(postal.value || "").trim()) return true;
+    const text = String(addressInput.value || "").trim();
+    const found = text ? await resolveTypedAddress(text) : null;
+    if (!found) {
       showAddrError(addressInput);
       return false;
     }
+    addressInput.value = found.address;
+    if (postal) postal.value = found.postal;
     clearAddrError(addressInput);
     return true;
-  }
-  if (postal && String(postal.value || "").trim()) return true;
-  const text = String(addressInput.value || "").trim();
-  const found = text ? await resolveTypedAddress(text) : null;
-  if (!found) {
-    showAddrError(addressInput);
+  } catch (e) {
+    if (!(e instanceof AddressServiceError)) throw e;
+    showAddrError(addressInput, ADDR_SERVICE_HINT);
     return false;
   }
-  addressInput.value = found.address;
-  if (postal) postal.value = found.postal;
-  clearAddrError(addressInput);
-  return true;
 }
 
 export function initAutocomplete(doc = document) {
   doc.querySelectorAll(ADDRESS_SELECTOR).forEach(attachPlacesOnce);
 }
 
-// Load the Maps library (~400 KB) once, on demand — not on page load.
-let mapsRequested = false;
+// Share one in-flight load. A failed attempt is removed so the next focus or
+// validation can retry; a late error from an old script cannot reset a new one.
+let mapsRequest = null;
+function finishMapsLoad(ready) {
+  if (mapsRequest) {
+    clearTimeout(mapsRequest.timer);
+    if (!ready) mapsRequest.script.remove();
+    mapsRequest = null;
+  }
+  [...mapsWaiters].forEach((done) => done(ready));
+}
+
 function loadGoogleMaps(doc = document) {
-  if (mapsRequested) return;
-  mapsRequested = true;
+  if (mapsRequest) return;
   const script = doc.createElement("script");
   script.src = `https://maps.googleapis.com/maps/api/js?key=${GOOGLE_API_KEY}&libraries=places&callback=initAutocomplete`;
   script.async = true;
   script.defer = true;
+  const request = { script, timer: null };
+  mapsRequest = request;
+  const fail = () => {
+    if (mapsRequest === request) finishMapsLoad(false);
+  };
+  script.onerror = fail;
+  request.timer = setTimeout(fail, 10000);
   doc.body.appendChild(script);
 }
 
 if (typeof window !== "undefined") {
+  // Editing or clearing a failed field must dismiss its hint even before Maps
+  // loads and installs the Places-specific input listener.
+  document.addEventListener("input", (e) => {
+    if (e.target?.matches(ADDRESS_SELECTOR)) clearAddrError(e.target);
+  });
   // Attach on focus — covers inputs added later by the stepper/IX. The first
   // focus loads Maps; its callback (initAutocomplete) attaches every field.
   document.addEventListener("focusin", (e) => {
@@ -270,10 +307,11 @@ if (typeof window !== "undefined") {
   });
   // Google Maps calls this back once the Places library is ready.
   window.initAutocomplete = () => {
-    mapsWaiters.splice(0).forEach((resolve) => resolve());
+    finishMapsLoad(Boolean(window.google?.maps?.Geocoder));
     initAutocomplete();
   };
   window.geolocate = () => console.log("Geolocate called.");
-  // Exposed for the funnel engine (cross-module, avoids ESM version pinning).
+  // Cross-module hooks for the funnel engine and prelead's native clear button.
   window.staymoIsRealAddress = isRealAddress;
+  window.staymoClearAddrError = clearAddrError;
 }
