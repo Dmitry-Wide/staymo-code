@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { initAddressClear } from "../src/prelead.js";
 import {
   extractPostal,
   getNodeIndex,
@@ -282,6 +283,28 @@ describe("isRealAddress", () => {
 });
 
 describe("showAddrError / clearAddrError", () => {
+  it("the native prelead clear button removes a service hint before Maps loads", () => {
+    expect(window.google).toBeUndefined();
+    document.body.innerHTML = `<form data-form-type="start-host">
+      <input data-input-id="address-search" value="E14 9ws">
+      <input data-input-id="postal-code-result" value="E14 9WS">
+      <button type="button" data-addr-change>Clear address</button>
+    </form>`;
+    const addr = document.querySelector('[data-input-id="address-search"]');
+    const postal = document.querySelector('[data-input-id="postal-code-result"]');
+    const inputEvent = vi.fn();
+    addr.addEventListener("input", inputEvent);
+    showAddrError(addr, ADDR_SERVICE_HINT);
+    initAddressClear(document, null, window);
+
+    document.querySelector("[data-addr-change]").click();
+    expect(addr.value).toBe("");
+    expect(postal.value).toBe("");
+    expect(document.querySelector(".staymo-addr-error")).toBe(null);
+    expect(addr.classList.contains("is-error")).toBe(false);
+    expect(inputEvent).not.toHaveBeenCalled(); // prelead uses the cross-module hook
+  });
+
   it.each([
     [ADDR_HINT, "E14 9ws"],
     [ADDR_HINT, ""],

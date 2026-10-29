@@ -311,6 +311,7 @@ if (typeof window !== "undefined") {
     initAutocomplete();
   };
   window.geolocate = () => console.log("Geolocate called.");
-  // Exposed for the funnel engine (cross-module, avoids ESM version pinning).
+  // Cross-module hooks for the funnel engine and prelead's native clear button.
   window.staymoIsRealAddress = isRealAddress;
+  window.staymoClearAddrError = clearAddrError;
 }
