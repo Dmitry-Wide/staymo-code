@@ -225,18 +225,10 @@ export function applyOutputs(doc, { response, fullAddress, postcode, beds, leads
   } catch (e) {}
 }
 
-// Drive the funnel transition.
-// Prefers the engine's screen controller; falls back to toggling legacy data-display marker.
+// Drive the funnel transition via the engine's screen controller.
 function goTo(doc, key) {
   if (typeof window !== "undefined" && typeof window.estGoTo === "function") {
     window.estGoTo(key);
-    return;
-  }
-
-  const el = doc.querySelector(`[data-display="${key}"]`);
-
-  if (el) {
-    el.style.display = key === "result" ? "flex" : "block";
   }
 }
 
@@ -284,9 +276,7 @@ function drawChartWhenVisible(doc, min, max, longTerm) {
 
 export function initValuation(doc = document) {
   doc.addEventListener("click", (e) => {
-    const trigger =
-      e.target.closest('[aria-label="Start Estimate"]') ||
-      e.target.closest("[start-ready-button]");
+    const trigger = e.target.closest("[start-ready-button]");
 
     if (!trigger) return;
 
@@ -356,27 +346,6 @@ export function initValuation(doc = document) {
           });
 
           goTo(doc, "result");
-
-          // Belt-and-braces update after the result screen is active.
-          setTimeout(() => {
-            const estimateRange =
-              response?.estimate ||
-              `£${response?.minimum} - £${response?.maximum}`;
-
-            doc.querySelectorAll('[data-output="estimate-range"]').forEach((el) => {
-              el.textContent = estimateRange;
-            });
-          }, 100);
-
-          setTimeout(() => {
-            const estimateRange =
-              response?.estimate ||
-              `£${response?.minimum} - £${response?.maximum}`;
-
-            doc.querySelectorAll('[data-output="estimate-range"]').forEach((el) => {
-              el.textContent = estimateRange;
-            });
-          }, 500);
 
           drawChartWhenVisible(
             doc,
