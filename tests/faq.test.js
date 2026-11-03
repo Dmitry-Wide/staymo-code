@@ -211,3 +211,97 @@ describe("setOpen animation", () => {
     expect(p.style.height).toBe("");
   });
 });
+
+describe("data-faq-media gate", () => {
+  // matchMedia stub: one shared state, listeners per query.
+  let matches;
+  const listeners = [];
+  beforeEach(() => {
+    matches = false;
+    listeners.length = 0;
+    window.matchMedia = (q) => ({
+      media: q,
+      get matches() {
+        return matches;
+      },
+      addEventListener: (_t, fn) => listeners.push(fn),
+    });
+  });
+  const cross = (m) => {
+    matches = m;
+    listeners.forEach((fn) => fn());
+  };
+  const gated = (q, html) => `<nav data-faq-list data-faq-media="${q}">${html}</nav>`;
+  const isPlain = (i) =>
+    !toggle(i).hasAttribute("aria-expanded") &&
+    !toggle(i).hasAttribute("role") &&
+    !toggle(i).hasAttribute("tabindex") &&
+    !toggle(i).hasAttribute("aria-controls") &&
+    !panel(i).hasAttribute("inert") &&
+    !panel(i).classList.contains("is-expanded") &&
+    icos(i).every((c) => !c.classList.contains("is-expanded")) &&
+    panel(i).style.height === "";
+
+  it("leaves items plain while the query does not match; clicks and keys do nothing", () => {
+    document.body.innerHTML = gated("(max-width: 767px)", item({ open: true }) + item() + item());
+    initFaq();
+    [0, 1, 2].forEach((i) => expect(isPlain(i)).toBe(true));
+    toggle(1).click();
+    toggle(1).dispatchEvent(new KeyboardEvent("keydown", { key: "Enter" }));
+    [0, 1, 2].forEach((i) => expect(isPlain(i)).toBe(true));
+  });
+
+  it("works as an accordion while the query matches", () => {
+    matches = true;
+    document.body.innerHTML = gated("(max-width: 767px)", item({ open: true }) + item() + item());
+    initFaq();
+    expect(isOpen(0)).toBe(true);
+    expect(isClosed(1)).toBe(true);
+    toggle(2).click();
+    expect(isOpen(2)).toBe(true);
+    expect(isClosed(0)).toBe(true);
+  });
+
+  it("re-applies the default state when the query starts or stops matching", () => {
+    document.body.innerHTML = gated("(max-width: 767px)", item({ open: true }) + item() + item());
+    initFaq();
+    cross(true);
+    expect(isOpen(0)).toBe(true);
+    expect(isClosed(1)).toBe(true);
+    toggle(1).click();
+    expect(isOpen(1)).toBe(true);
+    cross(false);
+    [0, 1, 2].forEach((i) => expect(isPlain(i)).toBe(true));
+    cross(true);
+    expect(isOpen(0)).toBe(true); // back to the default, not the last state
+    expect(isClosed(1)).toBe(true);
+    expect(panel(0).style.height).toBe("");
+  });
+
+  it("does not gate items outside a data-faq-media ancestor", () => {
+    document.body.innerHTML = item({ open: true }) + gated("(max-width: 767px)", item());
+    initFaq();
+    expect(isOpen(0)).toBe(true);
+    expect(isPlain(1)).toBe(true);
+  });
+});
+
+describe("double load", () => {
+  it("a second init (another copy of the script) does not rebind items", () => {
+    document.body.innerHTML = item() + item();
+    initFaq();
+    document.querySelectorAll("[data-faq-item]").forEach((el) => el.removeAttribute("data-faq-bound"));
+    initFaq(); // aria-expanded still guards
+    document.querySelectorAll("[data-faq-toggle]")[1].click();
+    expect(document.querySelectorAll("[data-faq-toggle]")[1].getAttribute("aria-expanded")).toBe("true");
+  });
+
+  it("skips gated items marked bound by another copy", () => {
+    window.matchMedia = () => ({ matches: false, addListener() {} });
+    document.body.innerHTML = `<nav data-faq-media="(max-width: 767px)">${item()}</nav>`;
+    initFaq();
+    expect(document.querySelector("[data-faq-item]").hasAttribute("data-faq-bound")).toBe(true);
+    initFaq();
+    expect(document.querySelector("[data-faq-toggle]").hasAttribute("role")).toBe(false);
+  });
+});
