@@ -33,6 +33,8 @@ function onMediaChange(mq, fn) {
   else if (typeof mq.addListener === "function") mq.addListener(fn);
 }
 
+let uid = 0;
+
 export function initMegaMenu(mm, { doc = document, win = window, mq } = {}) {
   if (!mm) return null;
   const panels = mm.querySelector(".mm__panels");
@@ -48,9 +50,31 @@ export function initMegaMenu(mm, { doc = document, win = window, mq } = {}) {
   const each = (sel, fn) => Array.from(mm.querySelectorAll(sel)).forEach(fn);
   const panelByKey = (key) => mm.querySelector(`.mm-panel[data-panel="${key}"]`);
 
+  /* Screen readers learn open/closed state from aria-expanded, and which surface a
+     control drives from aria-controls; panels without an id get a stable one. */
+  const base = `mm${++uid}`; /* per-root prefix: several .mm roots never share an id */
+  if (!panels.id) panels.id = `${base}-panels`;
+  if (burger) {
+    burger.setAttribute("aria-controls", panels.id);
+    burger.setAttribute("aria-expanded", "false");
+  }
+  each(".mm__trigger-wrap", (w) => {
+    const t = w.querySelector(".mm__trigger");
+    const p = panelByKey(w.getAttribute("data-open"));
+    if (!t) return;
+    if (p) {
+      if (!p.id) p.id = `${base}-panel-${String(w.getAttribute("data-open")).replace(/[^\w-]/g, "-")}`;
+      t.setAttribute("aria-controls", p.id);
+    }
+    t.setAttribute("aria-expanded", "false");
+  });
+
   /* JS flips .is-active on the burger and each line; the X geometry is CSS. */
   function setBurger(on) {
-    if (burger) burger.classList.toggle("is-active", on);
+    if (burger) {
+      burger.classList.toggle("is-active", on);
+      burger.setAttribute("aria-expanded", on ? "true" : "false");
+    }
     Array.from(lines).forEach((l) => l.classList.toggle("is-active", on));
   }
 
@@ -104,7 +128,10 @@ export function initMegaMenu(mm, { doc = document, win = window, mq } = {}) {
     panels.classList.remove("is-open");
     each(".mm-panel", (p) => p.classList.remove("is-current"));
     each(".mm-panel__inner", (i) => i.classList.remove("is-open"));
-    each(".mm__trigger", (t) => t.classList.remove("is-active"));
+    each(".mm__trigger", (t) => {
+      t.classList.remove("is-active");
+      t.setAttribute("aria-expanded", "false");
+    });
     setBurger(false);
     unlock();
     clearReveal();
@@ -120,7 +147,10 @@ export function initMegaMenu(mm, { doc = document, win = window, mq } = {}) {
     lock();
     each(".mm__trigger-wrap", (w) => {
       const t = w.querySelector(".mm__trigger");
-      if (t) t.classList.toggle("is-active", w.getAttribute("data-open") === key);
+      if (!t) return;
+      const on = w.getAttribute("data-open") === key;
+      t.classList.toggle("is-active", on);
+      t.setAttribute("aria-expanded", on ? "true" : "false");
     });
     reveal(panel);
   }
@@ -223,6 +253,7 @@ export function initMegaMenu(mm, { doc = document, win = window, mq } = {}) {
   const hash = win.location && win.location.hash ? win.location.hash.match(/mm=([\w-]+)/) : null;
   if (hash) {
     panels.classList.add("is-open");
+    if (burger) burger.setAttribute("aria-expanded", "true");
     lock();
     if (hash[1] !== "open") openPanel(hash[1]);
   }
