@@ -9,6 +9,7 @@ import {
   pickGeoFill,
   initHeaderAddress,
   initNavScrollClose,
+  initDrawerAnchorClose,
   unionRect,
   NO_HERO_OFFSET,
   STORAGE_KEY,
@@ -1025,5 +1026,73 @@ describe("initNavScrollClose", () => {
     expect(setup({ jq: false })).toBe(null);
     await open("t1");
     expect(scrollListeners()).toBe(0);
+  });
+});
+
+describe("initDrawerAnchorClose", () => {
+  let win, closed;
+  function setup({ mobile = true, jq = true, path = "/" } = {}) {
+    document.body.innerHTML = `
+      <div class="hdr__dd w-dropdown" id="burgerDd">
+        <div class="hdr__burger w-dropdown-toggle" aria-expanded="true"></div>
+        <nav class="w-dropdown-list">
+          <div class="w-dropdown"><nav class="w-dropdown-list">
+            <a class="hdr__link" id="same" href="/#ready-to-get-started"><span id="inner">Go</span></a>
+            <a class="hdr__link" id="other" href="/pricing#plans">Pricing</a>
+            <a class="hdr__link" id="nohash" href="/">Home</a>
+            <a class="hdr__link" id="hashonly" href="#faq">FAQ</a>
+            <a class="hdr__link" id="ext" href="https://example.com/#x">Ext</a>
+          </nav></div>
+        </nav>
+      </div>
+      <a id="outside" href="/#ready-to-get-started">Outside</a>`;
+    closed = [];
+    const loc = new URL(`https://staymo.webflow.io${path}`);
+    win = {
+      location: { href: loc.href, origin: loc.origin, pathname: loc.pathname },
+      matchMedia: (q) => ({ matches: q === "(min-width: 768px)" && !mobile }),
+      jQuery: jq ? (el) => ({ triggerHandler: (ev) => closed.push([el.id, ev]) }) : undefined,
+    };
+    return initDrawerAnchorClose(win, document);
+  }
+  const click = (id) => document.getElementById(id).dispatchEvent(new MouseEvent("click", { bubbles: true }));
+
+  it("closes the drawer on a same-page anchor link (≤767)", () => {
+    setup();
+    click("same");
+    expect(closed).toEqual([["burgerDd", "w-close.w-dropdown"]]);
+  });
+
+  it("works for a click on the link's child and a bare #hash", () => {
+    setup();
+    click("inner");
+    click("hashonly");
+    expect(closed.length).toBe(2);
+  });
+
+  it("ignores other pages, links without a hash, other origins and links outside the drawer", () => {
+    setup();
+    ["other", "nohash", "ext", "outside"].forEach(click);
+    expect(closed).toEqual([]);
+  });
+
+  it("a /#hash link on another page is not same-page", () => {
+    setup({ path: "/pricing" });
+    click("same");
+    expect(closed).toEqual([]);
+    click("hashonly");
+    expect(closed.length).toBe(1);
+  });
+
+  it("does nothing at ≥768px", () => {
+    setup({ mobile: false });
+    click("same");
+    expect(closed).toEqual([]);
+  });
+
+  it("is a no-op without jQuery", () => {
+    expect(setup({ jq: false })).toBe(null);
+    click("same");
+    expect(closed).toEqual([]);
   });
 });
