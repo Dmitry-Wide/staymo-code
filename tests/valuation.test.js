@@ -144,6 +144,28 @@ describe("initValuation", () => {
     );
   });
 
+  it("keeps the formatted range after the delayed rewrites (no estimate in response)", async () => {
+    outputsFixture();
+    document.body.insertAdjacentHTML(
+      "beforeend",
+      `<div data-input-id="address-search" data-value="75 Marsh Wall"></div>
+       <div data-input-id="postal-code-result" data-value="E14"></div>
+       <div data-rooms-input="2"></div>
+       <button start-ready-button>Go</button>
+       <div data-output="estimate-range"></div>`
+    );
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ minimum: "8400", maximum: "13650" }),
+    }));
+    initValuation();
+    document.querySelector("[start-ready-button]").dispatchEvent(new Event("click", { bubbles: true }));
+    const el = () => document.querySelector('[data-output="estimate-range"]');
+    await vi.waitFor(() => expect(el().textContent).toBe("£8,400 - £13,650"));
+    await new Promise((r) => setTimeout(r, 650));
+    expect(el().textContent).toBe("£8,400 - £13,650");
+  });
+
   it("shows noresults when postcode/beds missing", async () => {
     outputsFixture();
     document.body.insertAdjacentHTML(

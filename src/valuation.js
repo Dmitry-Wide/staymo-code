@@ -357,27 +357,6 @@ export function initValuation(doc = document) {
 
           goTo(doc, "result");
 
-          // Belt-and-braces update after the result screen is active.
-          setTimeout(() => {
-            const estimateRange =
-              response?.estimate ||
-              `£${response?.minimum} - £${response?.maximum}`;
-
-            doc.querySelectorAll('[data-output="estimate-range"]').forEach((el) => {
-              el.textContent = estimateRange;
-            });
-          }, 100);
-
-          setTimeout(() => {
-            const estimateRange =
-              response?.estimate ||
-              `£${response?.minimum} - £${response?.maximum}`;
-
-            doc.querySelectorAll('[data-output="estimate-range"]').forEach((el) => {
-              el.textContent = estimateRange;
-            });
-          }, 500);
-
           drawChartWhenVisible(
             doc,
             response.minimum,
