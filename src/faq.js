@@ -16,6 +16,13 @@
        [data-faq-toggle]      the question row; gets role=button for keyboards
          [data-faq-ico] ×2    the "−" and "+" glyphs
        [data-faq-panel]       the answer
+     [data-faq-media]         optional, on the item or any ancestor (closest
+                              wins): a media query; the accordion works only
+                              while it matches. Outside it the item is plain:
+                              no role/aria on the toggle, no inert, no
+                              is-expanded, clicks do nothing (e.g. the footer
+                              columns, an accordion on phones only). Crossing
+                              it re-applies the default state, no animation.
 
    State: class `is-expanded` on the panel and on each icon — Designer combos
    hold the open height and opacity, the `is-accordion` combos the transitions; the
@@ -25,7 +32,14 @@
 
 const OPEN = "is-expanded";
 const timers = new WeakMap();
+const bound = new WeakSet();
 let uid = 0;
+
+const query = (item) => item.closest("[data-faq-media]")?.getAttribute("data-faq-media") || "";
+const active = (item) => {
+  const q = query(item);
+  return !q || window.matchMedia(q).matches;
+};
 
 // Longest height transition on the panel, in ms (computed values are in s).
 function duration(panel) {
@@ -77,19 +91,40 @@ export function setOpen(item, open, animate = true) {
   timers.set(panel, setTimeout(release, ms));
 }
 
-export function initFaq(doc = document) {
-  doc.querySelectorAll("[data-faq-item]").forEach((item) => {
-    const toggle = item.querySelector("[data-faq-toggle]");
-    const panel = item.querySelector("[data-faq-panel]");
-    if (!toggle || !panel || toggle.hasAttribute("aria-expanded")) return;
-
-    if (!panel.id) panel.id = `faq-panel-${++uid}`;
+// Default state of a bound item for the current viewport.
+function apply(item) {
+  const toggle = item.querySelector("[data-faq-toggle]");
+  const panel = item.querySelector("[data-faq-panel]");
+  if (active(item)) {
     toggle.setAttribute("role", "button");
     toggle.setAttribute("tabindex", "0");
     toggle.setAttribute("aria-controls", panel.id);
     setOpen(item, !!item.querySelector(":scope > [data-faq-open]"), false);
+    return;
+  }
+  clearTimeout(timers.get(panel));
+  ["role", "tabindex", "aria-controls", "aria-expanded"].forEach((a) => toggle.removeAttribute(a));
+  panel.removeAttribute("inert");
+  panel.style.height = "";
+  panel.style.overflow = "";
+  panel.classList.remove(OPEN);
+  item.querySelectorAll("[data-faq-ico]").forEach((ico) => ico.classList.remove(OPEN));
+}
+
+export function initFaq(doc = document) {
+  doc.querySelectorAll("[data-faq-item]").forEach((item) => {
+    const toggle = item.querySelector("[data-faq-toggle]");
+    const panel = item.querySelector("[data-faq-panel]");
+    if (!toggle || !panel || bound.has(item)) return;
+    bound.add(item);
+
+    if (!panel.id) panel.id = `faq-panel-${++uid}`;
+    apply(item);
+    const q = query(item);
+    if (q) window.matchMedia(q).addEventListener("change", () => apply(item));
 
     toggle.addEventListener("click", () => {
+      if (!active(item)) return;
       const open = toggle.getAttribute("aria-expanded") !== "true";
       if (open) {
         const list = item.closest("[data-faq-list]");
@@ -103,7 +138,7 @@ export function initFaq(doc = document) {
       setOpen(item, open);
     });
     toggle.addEventListener("keydown", (e) => {
-      if (e.key !== "Enter" && e.key !== " ") return;
+      if (!active(item) || (e.key !== "Enter" && e.key !== " ")) return;
       e.preventDefault();
       toggle.click();
     });
