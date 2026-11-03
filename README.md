@@ -7,18 +7,15 @@ Versioned front-end modules (JS/CSS) for the Staymo Webflow project, served via 
 - JS binds to `data-*` attributes only, never to classes. Exception: markup a Webflow component owns and cannot carry `data-*` (`megamenu.js`, `button-names.js`); say so in the module header.
 - Release: Actions → **Release** → Run workflow with `version: vX.Y.Z` (tests, tags main, prints SRI in the run summary; agents trigger it via the API since they cannot push tags). Manual fallback: `git tag vX.Y.Z && git push --tags`. CDN: `https://cdn.jsdelivr.net/gh/Dmitry-Wide/staymo-code@vX.Y.Z/src/<file>`.
 
-## Local + Webflow from one URL
+## Release flow
 
-The jsDelivr URL is public, so the same `<script>`/`<link>` tags work when the
-export page is opened locally AND when pasted into Webflow custom code. Build
-locally against a version tag; when it works, paste the identical tags into
-Webflow (Page settings → custom code / a Code component). Bump the tag to ship
-a change — never reference `@latest` (cache + reproducibility). Each tag bump
-changes the file, so **regenerate the `integrity="sha384-…"` SRI hash** and
-update the tags; a stale hash blocks the file from loading.
+No local copy of the site is kept: modules are tested here with Vitest and checked on the live/staging page.
 
-Generate SRI for a released file:
-```bash
-curl -s "https://cdn.jsdelivr.net/gh/Dmitry-Wide/staymo-code@vX.Y.Z/src/chart.js" \
-  | openssl dgst -sha384 -binary | openssl base64 -A
-```
+1. **Tag.** Actions → **Release** → `version: vX.Y.Z` (runs tests, tags `main`, prints SRI in the run summary).
+2. **SRI.** Take the `integrity="sha384-…"` hash from the run summary, or compute it:
+   ```bash
+   curl -s "https://cdn.jsdelivr.net/gh/Dmitry-Wide/staymo-code@vX.Y.Z/src/<file>" \
+     | openssl dgst -sha384 -binary | openssl base64 -A
+   ```
+3. **Pin in Webflow.** Update the `<script>`/`<link>` tag (page or site custom code, or a Code component) to the new tag and hash. Done from `Dmitry-Wide/staymo-site`, not here. Never use `@latest`, and only jsDelivr — no githack or other CDN.
+4. **Verify.** In staymo-site: `python3 tools/verify.py drift` (no unpinned or SRI-less staymo-code tags). Which page loads which module at which tag: staymo-site `docs/INVENTORY.md` (`tools/inventory.py`).
