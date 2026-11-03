@@ -128,7 +128,7 @@ describe("initValuation", () => {
       `<div data-input-id="address-search" data-value="75 Marsh Wall"></div>
        <div data-input-id="postal-code-result" data-value="E14"></div>
        <div data-rooms-input="2"></div>
-       <button aria-label="Start Estimate">Go</button>
+       <button start-ready-button>Go</button>
        <div data-display="result" style="display:none"></div>`
     );
     const fetchMock = vi.fn().mockResolvedValue({
@@ -137,7 +137,7 @@ describe("initValuation", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
     initValuation();
-    document.querySelector('[aria-label="Start Estimate"]').dispatchEvent(new Event("click", { bubbles: true }));
+    document.querySelector("[start-ready-button]").dispatchEvent(new Event("click", { bubbles: true }));
     await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledOnce());
     await vi.waitFor(() =>
       expect(document.querySelector('[data-output="minimum-value"]').textContent).toBe("£1,000")
@@ -171,15 +171,15 @@ describe("initValuation", () => {
     document.body.insertAdjacentHTML(
       "beforeend",
       `<div data-display="noresults" style="display:none"></div>
-       <button aria-label="Start Estimate">Go</button>`
+       <button start-ready-button>Go</button>`
     );
     const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
+    const estGoTo = vi.fn();
+    vi.stubGlobal("estGoTo", estGoTo);
     initValuation();
-    document.querySelector('[aria-label="Start Estimate"]').dispatchEvent(new Event("click", { bubbles: true }));
-    await vi.waitFor(() =>
-      expect(document.querySelector('[data-display="noresults"]').style.display).toBe("block")
-    );
+    document.querySelector("[start-ready-button]").dispatchEvent(new Event("click", { bubbles: true }));
+    await vi.waitFor(() => expect(estGoTo).toHaveBeenCalledWith("noresults"));
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
@@ -188,12 +188,12 @@ describe("initValuation", () => {
       "beforeend",
       `<div start-noresults data-display="noresults" style="display:none"><span data-output="address"></span></div>
        <div data-input-id="address-search" data-value="10 Downing St"></div>
-       <button aria-label="Start Estimate">Go</button>`
+       <button start-ready-button>Go</button>`
     );
     const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
     initValuation();
-    document.querySelector('[aria-label="Start Estimate"]').dispatchEvent(new Event("click", { bubbles: true }));
+    document.querySelector("[start-ready-button]").dispatchEvent(new Event("click", { bubbles: true }));
     await vi.waitFor(() =>
       expect(document.querySelector('[start-noresults] [data-output="address"]').textContent).toBe("10 Downing St")
     );
