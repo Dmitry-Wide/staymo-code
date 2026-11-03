@@ -58,7 +58,7 @@ Mac's permissions, so cloud sessions and contractors had no check): `rm` with -r
 after sudo, command, xargs, find -exec) and a forced `git branch` delete (-D, -d with -f or --force) are
 refused. `rm <file>`, `git rm -r` (git history keeps it) and `git branch -d` pass. Accident-grade too:
 `find -delete`, `shutil.rmtree`, `mv` to scratch slip past; `echo rm -r`, `grep rm -r .` are refused (any
-`rm` word but git's: it is how sudo, xargs and find -exec are seen).
+`rm` word but git's own subcommand: it is how sudo, xargs and find -exec are seen).
 
 Force-push is refused on every branch, not only main: the target of a bare `git push -f`
 cannot be read from the command line, and the studio rule is "no push --force" anyway.
@@ -283,6 +283,24 @@ def check_rm(args):
         if short_flag(a, "r") or short_flag(a, "R") or len(a) >= 3 and "--recursive".startswith(a):
             return RMTREE
     return None
+
+
+def git_rm(seg, i):
+    """seg[i] is git's own `rm` (`git -C x --no-pager rm -r`): only git's global options between them,
+    so a path ending in git (`find ~/git -exec rm -rf {} +`) does not make it one. git itself is `git` or
+    a `…/bin/git`, never a path given to a wrapper (`env -C ~/git rm`, `chroot /srv/git rm`). A bare `git` as
+    a wrapper's value (`xargs -a git rm -r`, `flock git rm`) still passes: contrived, while `xargs -r git rm`
+    and `sudo -E git rm` are how agents write it."""
+    for j in range(i):
+        t = seg[j].lstrip("=")
+        if os.path.basename(t).lower() != "git" or ("/" in t and not re.search(r"(^|/)bin/git$", t, re.I)):
+            continue
+        k = j + 1
+        while k < i and (seg[k] in GIT_OPTS_WITH_ARG or seg[k].startswith("--") or seg[k] in ("-p", "-P")):
+            k += 2 if seg[k] in GIT_OPTS_WITH_ARG else 1
+        if k == i:
+            return True
+    return False
 
 
 def check_push(rest):
@@ -629,7 +647,7 @@ def verdict(cmd):
             name = os.path.basename(t).lstrip("=").lower()  # zsh runs =git; APFS runs GIT
             if name == "git":
                 why = check_git(seg[i + 1:])
-            elif name == "rm" and not any(os.path.basename(x).lower() == "git" for x in seg[:i]):
+            elif name == "rm" and not git_rm(seg, i):
                 why = check_rm(seg[i + 1:])  # rm itself, after sudo, xargs, find -exec; not `git rm`
             elif name == "gh" and seg[i + 1:i + 2] == ["pr"]:
                 why = check_pr(seg[i + 2:])
@@ -726,6 +744,9 @@ def selftest():
         "ls | xargs rm -r", "find . -name x -exec rm -r {} \\;", "find . -exec rm -rf {} +",
         "cd x && rm -rf build", "bash -c 'rm -rf x'", "echo $(rm -r x)", "RM -r x",
         "git branch -D foo", "git branch -d -f foo", "git branch -df foo", "git branch -fd foo",
+        "find ~/git -name x -exec rm -rf {} +", "find ~/git -exec rm -r {} \\;", "ls git | xargs rm -r",
+        "env -C ~/git rm -rf x", "sudo -D ~/git rm -rf x", "flock /tmp/git rm -rf x",
+        "chroot /srv/git rm -rf /x",
         "git branch --delete --force foo", "git branch --de -f foo", "git branch --d --force foo", "git branch -d --force foo", "git branch --delete -f foo",
         "git -C ../repo branch -D foo", "git branch -D -r origin/foo",
     ]
@@ -766,7 +787,11 @@ def selftest():
         "gh help pr merge",
         "gh pr create --title merge --body x",
         "git push origin main > /tmp/push.log 2>&1",
-        "rm file", "rm -f file", "rm -i a b", "rm -- -r", "git rm -r --cached dir", "git -C x rm -r dir",
+        "rm file", "rm -f file", "rm -i a b", "rm -- -r", "git rm -r --cached dir", "git -C x rm -r dir", "/usr/bin/git rm -r dir", "git --no-pager rm -r dir",
+        "git -c a=b -C x rm -rf --cached dir", "=git rm -r dir",
+        "sudo -u bob git rm -r dir", "xargs -I {} git rm -r {}", "/opt/homebrew/bin/git rm -r dir",
+        "nice -n 10 git rm -r dir", "git ls-files -d | xargs -r git rm -r --cached",
+        "sudo -E git rm -r dir", "env -i git rm -r dir", "GIT_DIR=x git rm -r dir",
         "grep -rn rm src", 'git commit -m "rm -rf is refused"', "rmdir dir", "find . -name '*.pyc' -exec rm {} +",
         "git branch -d foo", "git branch --delete foo", "git branch -f foo main", "git branch --format=%(refname)",
         "git branch -r", "git branch -dr origin/foo", "git push -d origin claude/old",
