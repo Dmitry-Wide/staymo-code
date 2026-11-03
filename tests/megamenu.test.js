@@ -1,8 +1,9 @@
-import { describe, it, expect, beforeEach, vi } from "vitest";
-import { PARENT, initMegaMenu } from "../src/megamenu.js";
+import { describe, it, expect, beforeEach } from "vitest";
+import { initMegaMenu } from "../src/megamenu.js";
 
 // Markup mirrors the live Webflow structure: a bar of triggers, a panels surface
-// holding one .mm-panel per key, and a Talk panel with the two-state card.
+// holding one .mm-panel per key. A leftover secondary-panel hook (data-tab) is
+// kept in the markup to prove it no longer does anything.
 function fixture() {
   document.body.innerHTML = `
     <div class="mm">
@@ -24,21 +25,6 @@ function fixture() {
             <a class="mm-link" href="/#ready-to-get-started">How it works</a>
             <a class="mm-link" href="/pricing">Pricing</a>
             <a class="mm-link" href="#">Revenue reports</a>
-          </div></div>
-        </div>
-        <div class="mm-panel" data-panel="how-it-works">
-          <div class="mm-panel__inner">
-            <div class="mm-panel__content">
-              <div class="mm-back" data-tab="property-owners">Back</div>
-              <div class="mm-hstep">1</div><div class="mm-hstep">2</div>
-            </div>
-          </div>
-        </div>
-        <div class="mm-panel" data-panel="talk-to-team">
-          <div class="mm-panel__inner"><div class="mm-panel__content">
-            <button data-expand>Show steps</button>
-            <div class="mm-assess"></div>
-            <div class="mm-talk__reveal"></div>
           </div></div>
         </div>
       </div>
@@ -86,28 +72,6 @@ describe("desktop", () => {
     expect(panel("solutions").classList.contains("is-current")).toBe(false);
   });
 
-  it("keeps the parent trigger highlighted while a secondary panel is open", () => {
-    const mm = fixture();
-    initMegaMenu(mm, { mq: media(false) });
-
-    click(q('[data-tab="how-it-works"]'));
-
-    expect(panel("how-it-works").classList.contains("is-current")).toBe(true);
-    expect(PARENT["how-it-works"]).toBe("property-owners");
-    expect(q('.mm__trigger-wrap[data-open="property-owners"] .mm__trigger').classList.contains("is-active")).toBe(true);
-  });
-
-  it("back returns to the parent panel instead of closing", () => {
-    const mm = fixture();
-    initMegaMenu(mm, { mq: media(false) });
-    click(q('[data-tab="how-it-works"]'));
-
-    click(q(".mm-back"));
-
-    expect(panel("property-owners").classList.contains("is-current")).toBe(true);
-    expect(panel("how-it-works").classList.contains("is-current")).toBe(false);
-  });
-
   it("Escape closes the menu and releases the scroll lock", () => {
     const mm = fixture();
     initMegaMenu(mm, { mq: media(false) });
@@ -120,51 +84,16 @@ describe("desktop", () => {
     expect(document.documentElement.style.overflow).toBe("");
   });
 
-  it("staggers the step reveal", async () => {
-    vi.useFakeTimers();
-    const mm = fixture();
-    initMegaMenu(mm, { mq: media(false) });
-
-    click(q('[data-tab="how-it-works"]'));
-    const steps = panel("how-it-works").querySelectorAll(".mm-hstep");
-    expect(steps[0].classList.contains("is-in")).toBe(false);
-
-    vi.advanceTimersByTime(100);
-    expect(steps[0].classList.contains("is-in")).toBe(true);
-    expect(steps[1].classList.contains("is-in")).toBe(false);
-
-    vi.advanceTimersByTime(60);
-    expect(steps[1].classList.contains("is-in")).toBe(true);
-    vi.useRealTimers();
-  });
-});
-
-describe("two-state card", () => {
-  it("data-expand toggles is-expanded on the control and on the cards in its panel", () => {
+  it("fades the panel content in and resets it on close", () => {
     const mm = fixture();
     const api = initMegaMenu(mm, { mq: media(false) });
-    api.openPanel("talk-to-team");
-    const button = q("[data-expand]");
+    const content = panel("solutions").querySelector(".mm-panel__content");
 
-    click(button);
-    expect(button.classList.contains("is-expanded")).toBe(true);
-    expect(q(".mm-assess").classList.contains("is-expanded")).toBe(true);
-    expect(q(".mm-talk__reveal").classList.contains("is-expanded")).toBe(true);
+    api.openPanel("solutions");
+    expect(content.classList.contains("is-in")).toBe(true);
 
-    click(button);
-    expect(button.classList.contains("is-expanded")).toBe(false);
-    expect(q(".mm-assess").classList.contains("is-expanded")).toBe(false);
-  });
-
-  it("a panel always reopens collapsed", () => {
-    const mm = fixture();
-    const api = initMegaMenu(mm, { mq: media(false) });
-    api.openPanel("talk-to-team");
-    click(q("[data-expand]"));
-
-    api.openPanel("talk-to-team");
-
-    expect(q(".mm-assess").classList.contains("is-expanded")).toBe(false);
+    api.closeAll();
+    expect(content.classList.contains("is-in")).toBe(false);
   });
 });
 
@@ -198,20 +127,16 @@ describe("mobile", () => {
     expect(solutionsInner.classList.contains("is-open")).toBe(false);
   });
 
-  it("a secondary panel opens as a slide-over and back closes only it", () => {
+  it("a leftover data-tab hook does nothing (secondary panels removed 2026-08-12)", () => {
     const mm = fixture();
     initMegaMenu(mm, { mq: media(true) });
     click(q(".mm__burger"));
     click(panel("property-owners").querySelector(".mm-panel__head"));
 
     click(q('[data-tab="how-it-works"]'));
-    expect(panel("how-it-works").classList.contains("is-current")).toBe(true);
-    expect(panel("how-it-works").querySelector(".mm-panel__inner").classList.contains("is-open")).toBe(true);
 
-    click(q(".mm-back"));
-    expect(panel("how-it-works").classList.contains("is-current")).toBe(false);
-    // the drawer underneath is untouched
     expect(q(".mm__panels").classList.contains("is-open")).toBe(true);
+    expect(panel("property-owners").querySelector(".mm-panel__inner").classList.contains("is-open")).toBe(true);
   });
 
   // A same-page anchor scrolls without reloading, so the drawer has to get out of

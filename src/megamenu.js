@@ -15,22 +15,7 @@
        .mm-panel__head            mobile accordion header
        .mm-panel__inner           mobile accordion body / slide-over (.is-open)
        .mm-panel__content         faded in via .is-in
-       .mm-step / .mm-hstep       revealed with a stagger via .is-in
-     [data-tab]                   opens another panel (desktop) or a slide-over (mobile)
-     .mm-back[data-tab]           back control: closes the slide-over on mobile,
-                                  returns to the parent panel on desktop
-     [data-expand]                two-state card toggle (.is-expanded on itself,
-                                  on .mm-assess and on .mm-talk__reveal in the panel)
    Deep link: #mm=<panel-key>, or #mm=open for the bare surface. */
-
-/* A secondary panel keeps its parent trigger highlighted while it is open. */
-export const PARENT = {
-  "how-it-works": "property-owners",
-  "talk-to-team": "property-owners",
-};
-
-/* Reveal stagger between steps, ms. Pairs with the transition timings on .mm-step. */
-export const STAGGER = 60;
 
 /* Desktop nav hides only after the bar height is passed; sub-pixel jitter is ignored. */
 const HIDE_AFTER = 120;
@@ -62,7 +47,6 @@ export function initMegaMenu(mm, { doc = document, win = window, mq } = {}) {
 
   const each = (sel, fn) => Array.from(mm.querySelectorAll(sel)).forEach(fn);
   const panelByKey = (key) => mm.querySelector(`.mm-panel[data-panel="${key}"]`);
-  let timers = [];
 
   /* JS flips .is-active on the burger and each line; the X geometry is CSS. */
   function setBurger(on) {
@@ -104,26 +88,16 @@ export function initMegaMenu(mm, { doc = document, win = window, mq } = {}) {
   }
 
   function clearReveal() {
-    timers.forEach(clearTimeout);
-    timers = [];
-    each(".mm-panel__content, .mm-step, .mm-hstep", (el) => el.classList.remove("is-in"));
-    /* a panel always reopens collapsed */
-    each(".mm-assess, .mm-talk__reveal, .mm-assess__toggle", (el) => el.classList.remove("is-expanded"));
+    each(".mm-panel__content", (el) => el.classList.remove("is-in"));
   }
 
-  /* JS only toggles .is-in. The promo card is deliberately NOT animated — it is
-     the same card on Property owners and How it works, so fading it would make it
-     flicker when switching between the two. */
+  /* JS only toggles .is-in; the promo card is deliberately not animated. */
   function reveal(panel) {
     const content = panel.querySelector(".mm-panel__content");
-    if (content) {
-      content.classList.remove("is-in");
-      void content.offsetWidth; /* force reflow so the transition restarts from the hidden state */
-      content.classList.add("is-in");
-    }
-    Array.from(panel.querySelectorAll(".mm-step, .mm-hstep")).forEach((el, i) => {
-      timers.push(setTimeout(() => el.classList.add("is-in"), 80 + STAGGER * i));
-    });
+    if (!content) return;
+    content.classList.remove("is-in");
+    void content.offsetWidth; /* force reflow so the transition restarts from the hidden state */
+    content.classList.add("is-in");
   }
 
   function closeAll() {
@@ -144,31 +118,11 @@ export function initMegaMenu(mm, { doc = document, win = window, mq } = {}) {
     panel.classList.add("is-current");
     panels.classList.add("is-open");
     lock();
-    const activeKey = PARENT[key] || key;
     each(".mm__trigger-wrap", (w) => {
       const t = w.querySelector(".mm__trigger");
-      if (t) t.classList.toggle("is-active", w.getAttribute("data-open") === activeKey);
+      if (t) t.classList.toggle("is-active", w.getAttribute("data-open") === key);
     });
     reveal(panel);
-  }
-
-  /* On mobile a secondary panel is a slide-over on top of the drawer, so the
-     drawer underneath is left as it is. */
-  function openSub(key) {
-    const panel = panelByKey(key);
-    if (!panel) return;
-    clearReveal();
-    panel.classList.add("is-current");
-    const inner = panel.querySelector(".mm-panel__inner");
-    if (inner) inner.classList.add("is-open");
-    reveal(panel);
-  }
-
-  function closeSub(panel) {
-    panel.classList.remove("is-current");
-    const inner = panel.querySelector(".mm-panel__inner");
-    if (inner) inner.classList.remove("is-open");
-    clearReveal();
   }
 
   /* Desktop only: scrolling down fades the nav out, scrolling up brings it back.
@@ -193,38 +147,6 @@ export function initMegaMenu(mm, { doc = document, win = window, mq } = {}) {
       panels.classList.add("is-open");
       setBurger(true);
       lock();
-      return;
-    }
-
-    /* Two-state card: the steps bar grows while the assessment card shrinks.
-       JS only flips .is-expanded — both heights and their easing are CSS. */
-    const expand = e.target.closest("[data-expand]");
-    if (expand) {
-      e.preventDefault();
-      const host = expand.closest(".mm-panel");
-      const on = !expand.classList.contains("is-expanded");
-      expand.classList.toggle("is-expanded", on);
-      if (host) {
-        Array.from(host.querySelectorAll(".mm-assess, .mm-talk__reveal"))
-          .forEach((el) => el.classList.toggle("is-expanded", on));
-      }
-      return;
-    }
-
-    const back = e.target.closest(".mm-back");
-    if (back) {
-      e.preventDefault();
-      const sub = back.closest(".mm-panel");
-      if (isMobile()) { if (sub) closeSub(sub); }
-      else openPanel(back.getAttribute("data-tab"));
-      return;
-    }
-
-    const tab = e.target.closest("[data-tab]");
-    if (tab) {
-      e.preventDefault();
-      const key = tab.getAttribute("data-tab");
-      if (isMobile()) openSub(key); else openPanel(key);
       return;
     }
 
@@ -305,7 +227,7 @@ export function initMegaMenu(mm, { doc = document, win = window, mq } = {}) {
     if (hash[1] !== "open") openPanel(hash[1]);
   }
 
-  return { openPanel, openSub, closeAll, closeSub };
+  return { openPanel, closeAll };
 }
 
 export function initAllMegaMenus(doc = document, options = {}) {
