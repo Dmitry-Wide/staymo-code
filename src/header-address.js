@@ -37,7 +37,11 @@
    pause NAV_SETTLE_GAP_MS (at most NAV_SETTLE_MAX_MS), so only a scroll started after the
    open closes it. Webflow-owned markup, so classes,
    not data-*. Never ≤767 (the burger drawer's accordions); no jQuery → no-op; the scroll
-   listener exists only while a panel is open. */
+   listener exists only while a panel is open.
+   Burger drawer (initDrawerAnchorClose, site-wide): at ≤767px a click on an a[href] inside
+   the burger's dropdown (.hdr__burger is its .w-dropdown-toggle) that points to a block on
+   this same page (same origin and path, with a #hash) closes the drawer the same way, so
+   the block it scrolls to is in view. The link still does its own scroll. No jQuery → no-op. */
 
 export const STORAGE_KEY = "staymo_address";
 export const STORAGE_TTL_MS = 30 * 60 * 1000;
@@ -711,9 +715,36 @@ export function initNavScrollClose(win = window, doc = document) {
   return { sync, disconnect: () => (observer.disconnect(), listen(false)) };
 }
 
+// --- Burger drawer: close on a same-page anchor link (mobile) ---
+export function initDrawerAnchorClose(win = window, doc = document) {
+  const jq = win.jQuery;
+  if (typeof jq !== "function") return null;
+  const burger = doc.querySelector(".hdr__burger");
+  const dd = burger && burger.closest(".w-dropdown");
+  if (!dd) return null;
+  const mq = typeof win.matchMedia === "function" ? win.matchMedia(NAV_DESKTOP_QUERY) : null;
+  const onClick = (e) => {
+    if (!mq || mq.matches) return;
+    const a = e.target && e.target.closest && e.target.closest("a[href]");
+    if (!a || !dd.contains(a)) return;
+    let url;
+    try {
+      url = new URL(a.getAttribute("href"), win.location.href);
+    } catch {
+      return;
+    }
+    const here = win.location;
+    if (!url.hash || url.origin !== here.origin || url.pathname !== here.pathname) return;
+    jq(dd).triggerHandler("w-close.w-dropdown");
+  };
+  dd.addEventListener("click", onClick);
+  return { disconnect: () => dd.removeEventListener("click", onClick) };
+}
+
 if (typeof window !== "undefined") {
   window.addEventListener("DOMContentLoaded", () => {
     initNavScrollClose();
+    initDrawerAnchorClose();
     initHeaderAddress();
   });
 }
