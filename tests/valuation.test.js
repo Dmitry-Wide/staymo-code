@@ -146,7 +146,7 @@ describe("initValuation", () => {
        <div data-input-id="postal-code-result" data-value="E14"></div>
        <div data-rooms-input="2"></div>
        <button start-ready-button>Go</button>
-       <div data-display="result" style="display:none"></div>`
+       <div start-result style="display:none"></div>`
     );
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
@@ -187,7 +187,7 @@ describe("initValuation", () => {
     outputsFixture();
     document.body.insertAdjacentHTML(
       "beforeend",
-      `<div data-display="noresults" style="display:none"></div>
+      `<div start-noresults style="display:none"></div>
        <button start-ready-button>Go</button>`
     );
     const fetchMock = vi.fn();
@@ -203,7 +203,7 @@ describe("initValuation", () => {
   it("fills the noresults address with the typed address when postcode is missing", async () => {
     document.body.insertAdjacentHTML(
       "beforeend",
-      `<div start-noresults data-display="noresults" style="display:none"><span data-output="address"></span></div>
+      `<div start-noresults style="display:none"><span data-output="address"></span></div>
        <div data-input-id="address-search" data-value="10 Downing St"></div>
        <button start-ready-button>Go</button>`
     );
