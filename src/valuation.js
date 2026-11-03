@@ -226,9 +226,7 @@ function showNoResultsState(doc, address) {
 function drawChartWhenVisible(doc, min, max, longTerm) {
   if (!window.initChart) return;
 
-  const screen =
-    doc.querySelector("[start-result]") ||
-    doc.querySelector('[data-display="result"]');
+  const screen = doc.querySelector("[start-result]");
 
   if (!screen) {
     window.initChart(min, max, longTerm);
