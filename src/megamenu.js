@@ -33,6 +33,8 @@ function onMediaChange(mq, fn) {
   else if (typeof mq.addListener === "function") mq.addListener(fn);
 }
 
+let uid = 0;
+
 export function initMegaMenu(mm, { doc = document, win = window, mq } = {}) {
   if (!mm) return null;
   const panels = mm.querySelector(".mm__panels");
@@ -50,7 +52,8 @@ export function initMegaMenu(mm, { doc = document, win = window, mq } = {}) {
 
   /* Screen readers learn open/closed state from aria-expanded, and which surface a
      control drives from aria-controls; panels without an id get a stable one. */
-  if (!panels.id) panels.id = "mm-panels";
+  const base = `mm${++uid}`; /* per-root prefix: several .mm roots never share an id */
+  if (!panels.id) panels.id = `${base}-panels`;
   if (burger) {
     burger.setAttribute("aria-controls", panels.id);
     burger.setAttribute("aria-expanded", "false");
@@ -60,7 +63,7 @@ export function initMegaMenu(mm, { doc = document, win = window, mq } = {}) {
     const p = panelByKey(w.getAttribute("data-open"));
     if (!t) return;
     if (p) {
-      if (!p.id) p.id = `mm-panel-${w.getAttribute("data-open")}`;
+      if (!p.id) p.id = `${base}-panel-${String(w.getAttribute("data-open")).replace(/[^\w-]/g, "-")}`;
       t.setAttribute("aria-controls", p.id);
     }
     t.setAttribute("aria-expanded", "false");
@@ -250,6 +253,7 @@ export function initMegaMenu(mm, { doc = document, win = window, mq } = {}) {
   const hash = win.location && win.location.hash ? win.location.hash.match(/mm=([\w-]+)/) : null;
   if (hash) {
     panels.classList.add("is-open");
+    if (burger) burger.setAttribute("aria-expanded", "true");
     lock();
     if (hash[1] !== "open") openPanel(hash[1]);
   }
