@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
-"""PreToolUse hook: refuse a force-push, any deletion of main, merging a PR that touches the locks and
-editing or deleting a GitHub ruleset, from Claude's shell tools; gate the GitHub MCP merge.
+"""PreToolUse hook: refuse a force-push, any deletion of main, merging a PR that touches the locks,
+editing or deleting a GitHub ruleset, `rm -r` and `git branch -D`, from Claude's shell tools; gate the
+GitHub MCP merge.
 
 core.hooksPath does not travel to cloud sessions and most repos have no .githooks/pre-push,
 so this is the gate that goes wherever .claude/ goes. It stops accidents, not a determined
@@ -51,6 +52,13 @@ listing several locks), so an ask turn holds no other question. --auto, --admin 
 Routines get no «да». A teammate's report is origin "peer", a task notification (a send_later or
 scheduled wake too, checked 2026-10-16) "task-notification": no «да» either. Residual risk: the transcript is a file on the agent's own disk, so an agent that writes a fake
 prompt into it passes; like the rest of this hook, it stops accidents, not a determined agent.
+
+Deleting without a copy (core rule «Nothing is deleted without a copy», Dmitry 2026-11-03: it held only as his
+Mac's permissions, so cloud sessions and contractors had no check): `rm` with -r, -R or --recursive (also
+after sudo, command, xargs, find -exec) and a forced `git branch` delete (-D, -d with -f or --force) are
+refused. `rm <file>`, `git rm -r` (git history keeps it) and `git branch -d` pass. Accident-grade too:
+`find -delete`, `shutil.rmtree`, `mv` to scratch slip past; `echo rm -r`, `grep rm -r .` are refused (any
+`rm` word but git's: it is how sudo, xargs and find -exec are seen).
 
 Force-push is refused on every branch, not only main: the target of a bare `git push -f`
 cannot be read from the command line, and the studio rule is "no push --force" anyway.
@@ -123,6 +131,12 @@ UNKNOWN = ("Blocked by .claude/hooks/guard-git-push.py: could not read the files
            "so it may touch the locks. Retry, or give Dmitry the PR link.")
 AUTO = ("Blocked by .claude/hooks/guard-git-push.py: --auto and --admin are off for agents. Wait for the "
         "required check (`gh pr checks <N> -R <owner>/<repo> --watch`), then merge.")
+RMTREE = ("Blocked by .claude/hooks/guard-git-push.py: `rm -r` is off for agents (core rule «Nothing is deleted "
+          "without a copy»). Ask Dmitry; no workarounds (moving it to scratch, find -delete, a script are one). "
+          "Single files: `rm <file>`; tracked ones: `git rm -r` (git history keeps them).")
+BRANCH_D = ("Blocked by .claude/hooks/guard-git-push.py: `git branch -D` (a forced delete) is off for agents "
+            "(core rule «Nothing is deleted without a copy»): an unmerged branch stays. A merged one: "
+            "`git branch -d`. Ask Dmitry; no workarounds.")
 RULESET = ("Blocked by .claude/hooks/guard-git-push.py: editing or deleting a GitHub ruleset is off "
            "for agents (creating one is allowed). Ask Dmitry.")
 
@@ -235,18 +249,43 @@ def long_opt(arg, names):
     return len(name) >= 5 and any(n.startswith(name) for n in names)
 
 
-def check_push(args):
+def git_sub(args):
+    """(git's subcommand, its arguments): git's global options skipped; (None, []) if none."""
     it = iter(args)
-    for a in it:  # skip git's global options to reach the subcommand
+    for a in it:
         if a in GIT_OPTS_WITH_ARG:
             next(it, None)
         elif not a.startswith("-"):
-            if a != "push":
-                return None
+            return a, list(it)
+    return None, []
+
+
+def check_git(args):
+    sub, rest = git_sub(args)
+    return check_push(rest) if sub == "push" else check_branch(rest) if sub == "branch" else None
+
+
+def check_branch(args):
+    """`git branch -D`, `-d -f`, `--delete --force`: a forced delete loses unmerged commits."""
+    flags = [a for a in args if a.startswith("-")]
+    # git branch takes --d as --delete: no other option of it starts so
+    deleting = any(len(a) >= 3 and "--delete".startswith(a) or short_flag(a, "d") for a in flags)
+    forced = any(long_opt(a, ("--force",)) or short_flag(a, "f") for a in flags)
+    return BRANCH_D if any(short_flag(a, "D") for a in flags) or (deleting and forced) else None
+
+
+def check_rm(args):
+    """`rm` with -r, -R or --recursive (any spelling, any place before `--`)."""
+    for a in args:
+        if a == "--":
             break
-    else:
-        return None
-    rest = list(it)
+        # rm takes --r as --recursive: no other option of it starts so
+        if short_flag(a, "r") or short_flag(a, "R") or len(a) >= 3 and "--recursive".startswith(a):
+            return RMTREE
+    return None
+
+
+def check_push(rest):
     flags = [a for a in rest if a.startswith("-")]
     refs = [a for a in rest if not a.startswith("-")]
     if (any(long_opt(a, FORCE_OPTS) or short_flag(a, "f") for a in flags)
@@ -589,7 +628,9 @@ def verdict(cmd):
         for i, t in enumerate(seg):
             name = os.path.basename(t).lstrip("=").lower()  # zsh runs =git; APFS runs GIT
             if name == "git":
-                why = check_push(seg[i + 1:])
+                why = check_git(seg[i + 1:])
+            elif name == "rm" and not any(os.path.basename(x).lower() == "git" for x in seg[:i]):
+                why = check_rm(seg[i + 1:])  # rm itself, after sudo, xargs, find -exec; not `git rm`
             elif name == "gh" and seg[i + 1:i + 2] == ["pr"]:
                 why = check_pr(seg[i + 2:])
             elif name == "gh" and seg[i + 1:i + 2] == ["api"]:
@@ -679,6 +720,14 @@ def selftest():
         "gh api -X=DELETE repos/o/r/git/refs/heads/main",
         # a redirection does not end the command: -f after it still forces
         "git push origin main > log -f",
+        # deleting without a copy (core rule «Nothing is deleted without a copy»)
+        "rm -r /tmp/nonexist", "rm -R dir", "rm --recursive dir", "rm --rec dir", "rm --r dir", "rm --re dir", "rm -rf dir", "rm -fr dir",
+        "rm -f -r dir", "rm dir -r", "/bin/rm -rf dir", "sudo rm -rf dir", "command rm -r dir",
+        "ls | xargs rm -r", "find . -name x -exec rm -r {} \\;", "find . -exec rm -rf {} +",
+        "cd x && rm -rf build", "bash -c 'rm -rf x'", "echo $(rm -r x)", "RM -r x",
+        "git branch -D foo", "git branch -d -f foo", "git branch -df foo", "git branch -fd foo",
+        "git branch --delete --force foo", "git branch --de -f foo", "git branch --d --force foo", "git branch -d --force foo", "git branch --delete -f foo",
+        "git -C ../repo branch -D foo", "git branch -D -r origin/foo",
     ]
     allowed = [
         "git push origin main",
@@ -717,6 +766,10 @@ def selftest():
         "gh help pr merge",
         "gh pr create --title merge --body x",
         "git push origin main > /tmp/push.log 2>&1",
+        "rm file", "rm -f file", "rm -i a b", "rm -- -r", "git rm -r --cached dir", "git -C x rm -r dir",
+        "grep -rn rm src", 'git commit -m "rm -rf is refused"', "rmdir dir", "find . -name '*.pyc' -exec rm {} +",
+        "git branch -d foo", "git branch --delete foo", "git branch -f foo main", "git branch --format=%(refname)",
+        "git branch -r", "git branch -dr origin/foo", "git push -d origin claude/old",
     ]
     fail = 0
     for cmd, want in [(c, True) for c in blocked] + [(c, False) for c in allowed]:
