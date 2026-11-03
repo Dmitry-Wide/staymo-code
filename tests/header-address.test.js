@@ -420,6 +420,26 @@ describe("initHeaderAddress", () => {
       expect(melt).toBeTruthy();
     });
 
+    it("mobile: items in the open burger drawer stay put, the wordmark melts instead", () => {
+      const gsap = fakeGsap();
+      setup({ gsap });
+      // the drawer is open: its items are visible
+      const nav = document.querySelector("[data-hdr-bar] nav");
+      const dd = document.createElement("div");
+      dd.className = "w-dropdown";
+      dd.innerHTML = `<div class="hdr__burger w-dropdown-toggle"></div><nav class="w-dropdown-list"></nav>`;
+      nav.replaceWith(dd);
+      dd.lastElementChild.append(nav);
+      win.scrollY = 900;
+      win.fire("scroll");
+      const calls = gsap.timelines[0].calls;
+      expect(calls.some((c) => c[0] === "to" && Array.isArray(c[1]) && c[1].some((e) => e.id === "i1"))).toBe(false);
+      expect(calls.some((c) => c[0] === "to" && c[1]?.[0]?.id === "word")).toBe(true);
+      win.scrollY = 880;
+      win.fire("scroll");
+      expect(gsap.timelines[1].calls.some((c) => c[0] === "to" && Array.isArray(c[1]) && c[1].some((e) => e.id === "i1"))).toBe(false);
+    });
+
     it("the pill stops at its bounds, no overshoot (mobile and desktop)", () => {
       const grow = (tl) => tl.calls.find((c) => c[0] === "to" && c[1] === document.querySelector(".hdr__addr__field") && "width" in c[2]);
       HTMLElement.prototype.checkVisibility = function () { return this.dataset.hdrFx !== "item"; };
