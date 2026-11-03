@@ -103,6 +103,23 @@ describe("applyOutputs", () => {
     expect(document.querySelector('[data-process="property_bedrooms"]').value).toBe("2");
   });
 
+  it("leaves no debug globals or localStorage copies of the API response", () => {
+    outputsFixture();
+    delete window.estimateDebug;
+    delete window.latestEstimateApiResponse;
+    localStorage.clear();
+    applyOutputs(document, {
+      response: { minimum: "1000", maximum: "5000", annual: "36000" },
+      fullAddress: "75 Marsh Wall",
+      postcode: "E14",
+      beds: "2",
+      leadstart: "ppc",
+    });
+    expect(window.estimateDebug).toBeUndefined();
+    expect(window.latestEstimateApiResponse).toBeUndefined();
+    expect(localStorage.getItem("estimateDebug")).toBeNull();
+    expect(localStorage.getItem("latestEstimateApiResponse")).toBeNull();
+  });
   it("writes the address to every data-output=address element (loading/noresults/result)", () => {
     document.body.innerHTML = `
       <div start-loading><span data-output="address"></span></div>
