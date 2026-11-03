@@ -221,3 +221,35 @@ describe("mobile", () => {
     expect(q(".mm__panels").classList.contains("is-open")).toBe(true);
   });
 });
+
+describe("aria state", () => {
+  const trig = (key) => q(`.mm__trigger-wrap[data-open="${key}"] .mm__trigger`);
+
+  it("wires aria-controls and starts collapsed", () => {
+    initMegaMenu(fixture(), { mq: media(false) });
+    expect(q(".mm__burger").getAttribute("aria-expanded")).toBe("false");
+    expect(q(".mm__burger").getAttribute("aria-controls")).toBe(q(".mm__panels").id);
+    expect(trig("solutions").getAttribute("aria-expanded")).toBe("false");
+    expect(document.getElementById(trig("solutions").getAttribute("aria-controls"))).toBe(panel("solutions"));
+  });
+
+  it("desktop trigger reports open/closed", () => {
+    initMegaMenu(fixture(), { mq: media(false) });
+    click(trig("solutions"));
+    expect(trig("solutions").getAttribute("aria-expanded")).toBe("true");
+    expect(trig("property-owners").getAttribute("aria-expanded")).toBe("false");
+    click(trig("property-owners"));
+    expect(trig("solutions").getAttribute("aria-expanded")).toBe("false");
+    expect(trig("property-owners").getAttribute("aria-expanded")).toBe("true");
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
+    expect(trig("property-owners").getAttribute("aria-expanded")).toBe("false");
+  });
+
+  it("burger reports open/closed", () => {
+    initMegaMenu(fixture(), { mq: media(true) });
+    click(q(".mm__burger"));
+    expect(q(".mm__burger").getAttribute("aria-expanded")).toBe("true");
+    click(q(".mm__burger"));
+    expect(q(".mm__burger").getAttribute("aria-expanded")).toBe("false");
+  });
+});

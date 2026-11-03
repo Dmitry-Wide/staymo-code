@@ -48,9 +48,30 @@ export function initMegaMenu(mm, { doc = document, win = window, mq } = {}) {
   const each = (sel, fn) => Array.from(mm.querySelectorAll(sel)).forEach(fn);
   const panelByKey = (key) => mm.querySelector(`.mm-panel[data-panel="${key}"]`);
 
+  /* Screen readers learn open/closed state from aria-expanded, and which surface a
+     control drives from aria-controls; panels without an id get a stable one. */
+  if (!panels.id) panels.id = "mm-panels";
+  if (burger) {
+    burger.setAttribute("aria-controls", panels.id);
+    burger.setAttribute("aria-expanded", "false");
+  }
+  each(".mm__trigger-wrap", (w) => {
+    const t = w.querySelector(".mm__trigger");
+    const p = panelByKey(w.getAttribute("data-open"));
+    if (!t) return;
+    if (p) {
+      if (!p.id) p.id = `mm-panel-${w.getAttribute("data-open")}`;
+      t.setAttribute("aria-controls", p.id);
+    }
+    t.setAttribute("aria-expanded", "false");
+  });
+
   /* JS flips .is-active on the burger and each line; the X geometry is CSS. */
   function setBurger(on) {
-    if (burger) burger.classList.toggle("is-active", on);
+    if (burger) {
+      burger.classList.toggle("is-active", on);
+      burger.setAttribute("aria-expanded", on ? "true" : "false");
+    }
     Array.from(lines).forEach((l) => l.classList.toggle("is-active", on));
   }
 
@@ -104,7 +125,10 @@ export function initMegaMenu(mm, { doc = document, win = window, mq } = {}) {
     panels.classList.remove("is-open");
     each(".mm-panel", (p) => p.classList.remove("is-current"));
     each(".mm-panel__inner", (i) => i.classList.remove("is-open"));
-    each(".mm__trigger", (t) => t.classList.remove("is-active"));
+    each(".mm__trigger", (t) => {
+      t.classList.remove("is-active");
+      t.setAttribute("aria-expanded", "false");
+    });
     setBurger(false);
     unlock();
     clearReveal();
@@ -120,7 +144,10 @@ export function initMegaMenu(mm, { doc = document, win = window, mq } = {}) {
     lock();
     each(".mm__trigger-wrap", (w) => {
       const t = w.querySelector(".mm__trigger");
-      if (t) t.classList.toggle("is-active", w.getAttribute("data-open") === key);
+      if (!t) return;
+      const on = w.getAttribute("data-open") === key;
+      t.classList.toggle("is-active", on);
+      t.setAttribute("aria-expanded", on ? "true" : "false");
     });
     reveal(panel);
   }
