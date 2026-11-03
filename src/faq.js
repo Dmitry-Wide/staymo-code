@@ -32,7 +32,6 @@
 
 const OPEN = "is-expanded";
 const timers = new WeakMap();
-const bound = new WeakSet();
 let uid = 0;
 
 const query = (item) => item.closest("[data-faq-media]")?.getAttribute("data-faq-media") || "";
@@ -115,13 +114,20 @@ export function initFaq(doc = document) {
   doc.querySelectorAll("[data-faq-item]").forEach((item) => {
     const toggle = item.querySelector("[data-faq-toggle]");
     const panel = item.querySelector("[data-faq-panel]");
-    if (!toggle || !panel || bound.has(item)) return;
-    bound.add(item);
+    // Marker lives in the DOM so a second copy of the script (another tag)
+    // skips the item too; aria-expanded covers copies older than the marker.
+    if (!toggle || !panel || item.hasAttribute("data-faq-bound") || toggle.hasAttribute("aria-expanded")) return;
+    item.setAttribute("data-faq-bound", "");
 
     if (!panel.id) panel.id = `faq-panel-${++uid}`;
     apply(item);
     const q = query(item);
-    if (q) window.matchMedia(q).addEventListener("change", () => apply(item));
+    if (q) {
+      const mql = window.matchMedia(q);
+      const onChange = () => apply(item);
+      if (mql.addEventListener) mql.addEventListener("change", onChange);
+      else mql.addListener(onChange); // Safari < 14
+    }
 
     toggle.addEventListener("click", () => {
       if (!active(item)) return;

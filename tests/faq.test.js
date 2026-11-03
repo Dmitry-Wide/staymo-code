@@ -285,3 +285,23 @@ describe("data-faq-media gate", () => {
     expect(isPlain(1)).toBe(true);
   });
 });
+
+describe("double load", () => {
+  it("a second init (another copy of the script) does not rebind items", () => {
+    document.body.innerHTML = item() + item();
+    initFaq();
+    document.querySelectorAll("[data-faq-item]").forEach((el) => el.removeAttribute("data-faq-bound"));
+    initFaq(); // aria-expanded still guards
+    document.querySelectorAll("[data-faq-toggle]")[1].click();
+    expect(document.querySelectorAll("[data-faq-toggle]")[1].getAttribute("aria-expanded")).toBe("true");
+  });
+
+  it("skips gated items marked bound by another copy", () => {
+    window.matchMedia = () => ({ matches: false, addListener() {} });
+    document.body.innerHTML = `<nav data-faq-media="(max-width: 767px)">${item()}</nav>`;
+    initFaq();
+    expect(document.querySelector("[data-faq-item]").hasAttribute("data-faq-bound")).toBe(true);
+    initFaq();
+    expect(document.querySelector("[data-faq-toggle]").hasAttribute("role")).toBe(false);
+  });
+});
