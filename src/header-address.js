@@ -18,7 +18,8 @@
    data-hdr-fx and animates the switch — the menu items [data-hdr-fx="item"] melt into a
    pill at their place, the pill glides to the field and the field's content comes in
    (the marker fades in); back the same way. [data-hdr-fx="aside"] only fades;
-   [data-hdr-fx="logo"]'s last child is the menu on mobile (the wordmark). CSS keeps the
+   [data-hdr-fx="logo"]'s last child is the menu on mobile (the wordmark); at ≤767 items inside
+   the burger drawer (.hdr__burger's dropdown) never move, even while it is open. CSS keeps the
    end states (visibility) either way; without the attribute it fades as before.
    dataLayer: header_address_focus, header_address_geo, header_address_submit,
    header_address_clear.
@@ -241,8 +242,14 @@ export function createHeaderFx(win, bar, root, input) {
   const shown = (el) =>
     typeof el.checkVisibility === "function" ? el.checkVisibility({ visibilityProperty: true }) : isVisible(el);
   const visible = (els) => els.filter(shown);
+  // ≤767 the menu items live in the burger drawer: shown while it is open, but never the
+  // motion's (melted to 0 there, a toNav with the drawer closed would never bring them back).
+  const desktop = typeof win.matchMedia === "function" ? win.matchMedia(NAV_DESKTOP_QUERY) : null;
   const items = () => {
-    const desk = visible([...bar.querySelectorAll('[data-hdr-fx="item"]')]);
+    const burger = desktop && desktop.matches ? null : bar.ownerDocument.querySelector(".hdr__burger");
+    const drawer = burger && burger.closest(".w-dropdown");
+    const inDrawer = (el) => Boolean(drawer) && drawer.contains(el) && !burger.contains(el);
+    const desk = visible([...bar.querySelectorAll('[data-hdr-fx="item"]')]).filter((el) => !inDrawer(el));
     if (desk.length) return desk;
     const [logo] = visible([...bar.querySelectorAll('[data-hdr-fx="logo"]')]);
     return logo && logo.lastElementChild && logo.children.length > 1 ? [logo.lastElementChild] : [];
