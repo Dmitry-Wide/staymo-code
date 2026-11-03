@@ -273,7 +273,8 @@ if (typeof window !== "undefined") {
     mapsWaiters.splice(0).forEach((resolve) => resolve());
     initAutocomplete();
   };
-  window.geolocate = () => console.log("Geolocate called.");
+  // Webflow markup calls geolocate() on focus; keep a silent no-op.
+  window.geolocate = () => {};
   // Exposed for the funnel engine (cross-module, avoids ESM version pinning).
   window.staymoIsRealAddress = isRealAddress;
 }

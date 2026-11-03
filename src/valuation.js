@@ -202,27 +202,6 @@ export function applyOutputs(doc, { response, fullAddress, postcode, beds, leads
       }
     })
   );
-
-  // Debug storage for checking in console.
-  window.latestEstimateApiResponse = response;
-
-  window.estimateDebug = {
-    fullResponse: response,
-    estimate: response?.estimate,
-    minimum: response?.minimum,
-    maximum: response?.maximum,
-    annual: response?.annual,
-    estimateRange,
-    estimationValue,
-    fieldValue: estimationField ? estimationField.value : null,
-    fieldAttribute: estimationField ? estimationField.getAttribute("value") : null,
-    fieldDefaultValue: estimationField ? estimationField.defaultValue : null
-  };
-
-  try {
-    localStorage.setItem("latestEstimateApiResponse", JSON.stringify(response, null, 2));
-    localStorage.setItem("estimateDebug", JSON.stringify(window.estimateDebug, null, 2));
-  } catch (e) {}
 }
 
 // Drive the funnel transition via the engine's screen controller.
@@ -320,18 +299,6 @@ export function initValuation(doc = document) {
           return r.json();
         })
         .then((response) => {
-          // Store full API response for debugging.
-          window.latestEstimateApiResponse = response;
-
-          try {
-            localStorage.setItem(
-              "latestEstimateApiResponse",
-              JSON.stringify(response, null, 2)
-            );
-          } catch (e) {}
-
-          console.log("Estimate API response:", response);
-
           if (!isValidEstimate(response)) {
             showNoResultsState(doc, response.show_address || fullAddress || postcode);
             return;
