@@ -285,7 +285,7 @@ export function initValuation(doc = document) {
         utm: getUTMFromURL(location.href)
       });
 
-      fetch("https://valuation.smarthost.co.uk/smarthost-estimate.php", {
+      fetch("https://valuation.staymo.com/smarthost-estimate.php", {
         method: "POST",
         headers: {
           "Content-Type": "application/x-www-form-urlencoded"
